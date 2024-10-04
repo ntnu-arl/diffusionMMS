@@ -39,7 +39,7 @@ python eval.py --config <path-to-config-file> --fr <start-epoch> --to <end-epoch
 ### Visualize
 You can visualize the results on each datasets using the following command
 ```
-python test.py --config <path-to-config-file> --show
+python test.py --config <path-to-config-file> --epoch <epoch> --show
 ```
 
 ## Citing
@@ -71,4 +71,6 @@ This research was conducted at the [Autonomous Robots Lab](https://www.autonomou
 For more information, visit our website.
 
 ## Acknowledgements
+Our implementation is partly based on [mmsegmentaion](https://github.com/open-mmlab/mmsegmentation/tree/v0.24.1), [CMX](https://github.com/huaaaliu/RGBX_Semantic_Segmentation) and [DDP](https://github.com/JiYuanFeng/DDP). Thanks for their authors.
+
 This material was supported by the Research Council of Norway under Award NO-338694 and the European Commission under Grant No. 101121321.
