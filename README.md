@@ -14,7 +14,7 @@ pip install -r requirements.txt
 To install NATTEN, please follow the instruction in the [NATTEN](https://github.com/SHI-Labs/NATTEN/blob/main/docs/install.md) repository
 
 ### Data preparation
-Download NYUv2 and SUNRGBD dataset from [Google Drive](https://drive.google.com/drive/u/1/folders/1LeIw-yn7Erk1Zqys2gV5brmgYh7kEsg8) and put to them to `data` folder. Each dataset is categorized into train and val split using a text file containing the filename of images file.
+Download NYUv2 and SUNRGBD dataset from [Google Drive](https://drive.google.com/drive/u/1/folders/1LeIw-yn7Erk1Zqys2gV5brmgYh7kEsg8) and put them under `data` folder. Each dataset is categorized into train and val split using a text file containing the filename of images file.
 
 To create a list of depth images that have the most proportion of invalid pixels in the datasets, use the following command
 ```
