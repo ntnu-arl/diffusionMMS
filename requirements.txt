@@ -1,0 +1,10 @@
+opencv-python
+omegaconf
+einops
+mmcv==2.0.1 -f https://download.openmmlab.com/mmcv/dist/cu117/torch2.0/index.html
+timm
+mmsegmentation
+ftfy
+regex
+tensorboard
+numpy==1.26.4
