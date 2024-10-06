@@ -18,7 +18,7 @@ Download NYUv2 and SUNRGBD dataset from [Google Drive](https://drive.google.com/
 
 To create a list of depth images that have the most proportion of invalid pixels in the datasets, use the following command
 ```
-python utils/ranking_data.py --img_dir <path-to-depth-images-directory> --file <path-to-test-index-file>
+python -m utils.ranking_data --img_dir <path-to-depth-images-directory> --file <path-to-test-index-file>
 ```
 ### Training
 Download different variants of UperNet DAT++ backbone from [this repository](https://github.com/LeapLabTHU/DAT-Segmentation) and put them under `pretrained` folder

@@ -62,7 +62,6 @@ def show_pil_image(window_name: str, img: Image):
 
 
 def convert_depth_to_three_channel_img(depth):
-
     max_depth = np.max(depth)
     mask = np.where(depth == 0, 0, 1)
     min_depth = np.min(depth[np.nonzero(depth)])
