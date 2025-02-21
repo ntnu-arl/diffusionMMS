@@ -1,1 +1,6 @@
-**/__pycache/
+result/
+log/
+data
+output_dir/
+__pycache__/
+
