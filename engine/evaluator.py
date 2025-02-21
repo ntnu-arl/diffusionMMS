@@ -9,7 +9,7 @@ from torch.utils.data import DataLoader
 from utils.logger import get_root_logger
 from utils.helper import get_class_colors, print_iou
 from .metric import hist_info, compute_score
-
+import time
 logger = get_root_logger()
 
 

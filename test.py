@@ -10,7 +10,7 @@ import torch
 logger = get_root_logger()
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--config", default="config/semseg/nyuv2/dual_dat_small_uper.yaml")
+parser.add_argument("--config", default="config/nyuv2/dual_dat_small_uper.yaml")
 parser.add_argument("--show", action="store_true")
 parser.add_argument("--epoch", type=int, default=50)
 

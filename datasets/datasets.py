@@ -76,7 +76,7 @@ class DepthDataset(Dataset):
         )
         label = label - 1
         output["label"] = label
-
+        
         if self.common_transforms is not None:
             output = self.common_transforms(**output)
 
