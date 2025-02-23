@@ -1,12 +1,16 @@
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")))
+
 import torch
 import torch.nn as nn
 
+from ..dat_utils.dat_blocks import *
+from ..net_utils import FeatureFusionModule as FFM
+from ..net_utils import FeatureRectifyModule as FRM
+from ..backbone.dat import LayerNormProxy, TransformerStage
 from utils.logger import get_root_logger
-from models.dat_utils.dat_blocks import *
-from models.net_utils import FeatureFusionModule as FFM
-from models.net_utils import FeatureRectifyModule as FRM
 from utils.misc import load_dual_dat_pretrained_model
-from models.backbone.dat import LayerNormProxy, TransformerStage
 logger = get_root_logger()
 
 

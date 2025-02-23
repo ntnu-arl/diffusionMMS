@@ -5,7 +5,7 @@ DATETIME_FORMAT = "%m-%d %H:%M"
 
 logging.basicConfig(
     filename=None,
-    encoding="utf-8",
+    # encoding="utf-8",
     level=logging.INFO,
     format=FORMAT,
     datefmt=DATETIME_FORMAT,

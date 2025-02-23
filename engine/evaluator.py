@@ -192,3 +192,4 @@ class Evaluator:
             score = self.model.sampling(data["rgb"], data["depth"])
         pred = score.argmax(1)
         return pred
+

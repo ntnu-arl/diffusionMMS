@@ -1,8 +1,8 @@
 
-from models.backbone.dual_dat import dual_dat_b, dual_dat_s, dual_dat_t
-from models.decoder.fcn import FCNHead
-from models.decoder.deformable_transformer import MaskDecoder
-from models.decoder.neck import FeaturePyramidNetwork, MultiStageMerging
+from .backbone.dual_dat import dual_dat_b, dual_dat_s, dual_dat_t
+from .decoder.fcn import FCNHead
+from .decoder.deformable_transformer import MaskDecoder
+from .decoder.neck import FeaturePyramidNetwork, MultiStageMerging
 
 AVAI_BACKBONE = {
     "dat_t": dual_dat_t,

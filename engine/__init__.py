@@ -1,5 +1,5 @@
 import torch
-from models.segmentor.diffusionmms import DiffusionMMS
+from ..models.segmentor.diffusionmms import DiffusionMMS
 
 AVAI_MODEL = {"diffusionmms": DiffusionMMS}
 AVAI_OPT = {
@@ -7,7 +7,6 @@ AVAI_OPT = {
     "adam": torch.optim.Adam,
     "adamw": torch.optim.AdamW,
 }
-
 
 def get_model(model_name, **kwargs):
     if model_name not in AVAI_MODEL:

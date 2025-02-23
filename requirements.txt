@@ -1,7 +1,9 @@
+torch==2.0.0 torchvision==0.15.1 torchaudio==2.0.1 --index-url https://download.pytorch.org/whl/cu118
 opencv-python
 omegaconf
 einops
 mmcv==2.0.1 -f https://download.openmmlab.com/mmcv/dist/cu117/torch2.0/index.html
+natten==0.17.4+torch200cu118 -f https://shi-labs.com/natten/wheels
 timm
 mmsegmentation
 ftfy
