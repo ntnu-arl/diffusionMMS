@@ -2,12 +2,12 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.special import expm1
-import math
-from models import get_backbone, get_decoder, get_neck
 from einops import rearrange, repeat
-from utils.logger import get_root_logger
 from mmcv.cnn import ConvModule
-from models.decoder.neck import MultiStageMerging
+import math
+from ...models import get_backbone, get_decoder, get_neck
+from ..decoder.neck import MultiStageMerging
+from ...utils.logger import get_root_logger
 
 logger = get_root_logger()
 

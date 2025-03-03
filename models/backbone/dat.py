@@ -1,3 +1,6 @@
+import sys
+import os
+
 import math
 import torch
 import torch.nn as nn
@@ -6,7 +9,7 @@ from timm.models.layers import DropPath, to_2tuple
 from ..dat_utils.dat_blocks import *
 from ..dat_utils.nat import NeighborhoodAttention2D
 from ..dat_utils.slide import SlideAttention
-from utils.logger import get_root_logger
+from ...utils.logger import get_root_logger
 
 import torch.utils.checkpoint as cp
 logger = get_root_logger()

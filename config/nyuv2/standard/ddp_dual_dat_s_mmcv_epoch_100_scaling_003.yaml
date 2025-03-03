@@ -4,7 +4,7 @@ experiment_name: "ddp_dual_dat_s_mmcv_epoch_100_scaling_003"
 
 # Model
 model:
-  name: "diffusionmms"  
+  name: "diffusionmms"
   params:
     drop_depth: True
     timesteps: 3
@@ -14,16 +14,16 @@ model:
       name: "dat_s"
       params:
         frozen_stages: -1
-    neck: 
-      name: 'fpn'      
-      params: 
+    neck:
+      name: "fpn"
+      params:
         out_channels: 256
 
     decoder:
       name: "DeformableDETRwithTime"
       params:
         num_classes: 40
-      
+
     aux_head:
       name: "fcn"
       params:
@@ -38,7 +38,6 @@ model:
       bn_momentum: 0.1
 
 train:
-
   # Runner
 
   device: cuda
@@ -50,7 +49,7 @@ train:
   drop_last: True
   lr: 6e-5
   lr_power: 1.0
-  
+
   weight_decay: 0.01
   num_epochs: 100
   warmup_epoch: 10
@@ -59,7 +58,7 @@ train:
   saving_interval: 1
   start_saving_epoch: 1
 
-  # Dataset  
+  # Dataset
   dataset:
     params:
       root: "data/NYUDepthv2"
@@ -82,7 +81,6 @@ train:
       to_tensor:
         params: ~
 
-  
   opt_name: "adamw"
 
   # Logger
@@ -90,7 +88,6 @@ train:
 
   log_dir: log/
   output_dir: output_dir/
-
 
 val:
   batch_size: 1
@@ -115,4 +112,3 @@ val:
     depth_transforms:
       to_tensor:
         params: ~
-

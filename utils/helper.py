@@ -3,7 +3,7 @@ import numpy as np
 from PIL import Image
 import cv2
 import os
-from utils.logger import get_root_logger
+from .logger import get_root_logger
 
 logger = get_root_logger()
 
