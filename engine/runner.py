@@ -80,7 +80,7 @@ class Trainer:
         total_time = time.time() - start_time
         total_time_str = str(datetime.timedelta(seconds=int(total_time)))
         logger.info("Training time {}".format(total_time_str))
-
+    
     def train_one_epoch(self):
         cfg = self.train_cfg
         for data_iter_step, samples in enumerate(self.train_loader):
@@ -129,3 +129,4 @@ class Trainer:
             self.epoch,
         )
         self.log_writer.add_scalar("lr", lr, self.epoch)
+        

@@ -78,7 +78,7 @@ class DiffusionMMS(nn.Module):
         self.decode_head = get_decoder(decoder.name, **decoder.params)
         self.num_classes = decoder.params.num_classes
 
-        if aux_head is not None:
+        if aux_head is not None and eval is False:
             self.aux_head = get_decoder(aux_head.name, **aux_head.params)
         else:
             self.aux_head = None
@@ -199,7 +199,7 @@ class DiffusionMMS(nn.Module):
         # conditional input
         feat = torch.cat([x, noised_gt], dim=1)
         feat = self.transform(feat)
-
+        
         input_times = self.time_mlp(noise_level)
 
         out = self.decode_head([feat], input_times)

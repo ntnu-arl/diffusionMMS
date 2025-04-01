@@ -50,7 +50,7 @@ class Evaluator:
                 logger.info(f"Evaluate while training")
             else:
                 logger.info(f"Loading weight from {model_file}")
-                self.model.load_state_dict(torch.load(model_file)["model"])
+                self.model.load_state_dict(torch.load(model_file)["model"], strict=False)
 
         for i, data in enumerate(tqdm(self.val_loader)):
             label = data["label"].squeeze(1)
@@ -72,7 +72,7 @@ class Evaluator:
                 logger.info(f"Evaluate while training")
             else:
                 logger.info(f"Loading weight from {model_file}")
-                self.model.load_state_dict(torch.load(model_file)["model"])
+                self.model.load_state_dict(torch.load(model_file)["model"], strict=False)
             all_results = []
 
             for _, data in enumerate(tqdm(self.val_loader)):
