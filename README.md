@@ -1,5 +1,5 @@
 # DiffusionMMS
-This repository contains the source code for the paper Diffusion-based RGB-D Semantic Segmentation with Deformable Attention Transformer.
+This repository contains the source code for the paper Diffusion-based RGB-D Semantic Segmentation with Deformable Attention Transformer (Accepted to The 22nd International Conference on Advanced Robotics (ICAR 2025))
 
 ## Usage
 ### Dependencies
