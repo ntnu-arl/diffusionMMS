@@ -1,17 +1,7 @@
 import torch.nn as nn
 import torch
-import warnings
-from mmseg.models.decode_heads.decode_head import BaseDecodeHead
 
-try:
-    from mmcv.ops.multi_scale_deform_attn import MultiScaleDeformableAttention
-except ImportError:
-    warnings.warn(
-        "`MultiScaleDeformableAttention` in MMCV has been moved to "
-        "`mmcv.ops.multi_scale_deform_attn`, please update your MMCV"
-    )
-    from mmcv.cnn.bricks.transformer import MultiScaleDeformableAttention
-
+from models.common_layers import BaseDecodeHead, MultiScaleDeformableAttention
 from .transformer import DetrTransformerEncoder, SinePositionalEncoding
 
 

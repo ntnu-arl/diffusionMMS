@@ -6,7 +6,7 @@ import math
 from models import get_backbone, get_decoder, get_neck
 from einops import rearrange, repeat
 from utils.logger import get_root_logger
-from mmcv.cnn import ConvModule
+from models.common_layers import ConvModule
 from models.decoder.neck import MultiStageMerging
 
 logger = get_root_logger()

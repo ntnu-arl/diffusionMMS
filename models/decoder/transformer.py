@@ -2,21 +2,36 @@ import copy
 import math
 import warnings
 from einops import rearrange
-from mmengine.registry import MODELS
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from mmcv.cnn import build_norm_layer
-from mmcv.cnn.bricks.transformer import (
-    TransformerLayerSequence,
-    build_attention,
-    build_feedforward_network,
+from models.common_layers import (
+    build_norm_layer,
+    build_activation,
+    FFN,
+    MultiScaleDeformableAttention,
 )
-from mmengine.model import BaseModule, ModuleList
-from mmengine.config import ConfigDict
 
 
-class SinePositionalEncoding(BaseModule):
+def _build_attention(cfg):
+    """Build an attention module from a config dict."""
+    cfg = cfg.copy()
+    attn_type = cfg.pop("type")
+    if attn_type == "MultiScaleDeformableAttention":
+        return MultiScaleDeformableAttention(**cfg)
+    raise ValueError(f"Unknown attention type: {attn_type}")
+
+
+def _build_ffn(cfg):
+    """Build a feed-forward network from a config dict."""
+    cfg = cfg.copy()
+    ffn_type = cfg.pop("type")
+    if ffn_type == "FFN":
+        return FFN(**cfg)
+    raise ValueError(f"Unknown FFN type: {ffn_type}")
+
+
+class SinePositionalEncoding(nn.Module):
     """Position encoding with sine and cosine functions.
     See `End-to-End Object Detection with Transformers
     <https://arxiv.org/pdf/2005.12872>`_ for details.
@@ -35,8 +50,6 @@ class SinePositionalEncoding(BaseModule):
             numerical stability. Defaults to 1e-6.
         offset (float): offset add to embed when do the normalization.
             Defaults to 0.
-        init_cfg (dict or list[dict], optional): Initialization config dict.
-            Default: None
     """
 
     def __init__(
@@ -49,7 +62,7 @@ class SinePositionalEncoding(BaseModule):
         offset=0.0,
         init_cfg=None,
     ):
-        super(SinePositionalEncoding, self).__init__(init_cfg)
+        super().__init__()
         if normalize:
             assert isinstance(scale, (float, int)), (
                 "when normalize is set,"
@@ -112,39 +125,20 @@ class SinePositionalEncoding(BaseModule):
         return repr_str
 
 
-@MODELS.register_module()
-class BaseTransformerLayerWithTime(BaseModule):
+class BaseTransformerLayerWithTime(nn.Module):
     """Base `TransformerLayer` for vision transformer.
-    It can be built from `mmcv.ConfigDict` and support more flexible
-    customization, for example, using any number of `FFN or LN ` and
-    use different kinds of `attention` by specifying a list of `ConfigDict`
-    named `attn_cfgs`. It is worth mentioning that it supports `prenorm`
-    when you specifying `norm` as the first element of `operation_order`.
-    More details about the `prenorm`: `On Layer Normalization in the
-    Transformer Architecture <https://arxiv.org/abs/2002.04745>`_ .
+
+    Supports configurable self/cross attention, FFN, and norm layers
+    via operation_order, with optional time-conditioned modulation.
+
     Args:
-        attn_cfgs (list[`mmcv.ConfigDict`] | obj:`mmcv.ConfigDict` | None )):
-            Configs for `self_attention` or `cross_attention` modules,
-            The order of the configs in the list should be consistent with
-            corresponding attentions in operation_order.
-            If it is a dict, all of the attention modules in operation_order
-            will be built with this config. Default: None.
-        ffn_cfgs (list[`mmcv.ConfigDict`] | obj:`mmcv.ConfigDict` | None )):
-            Configs for FFN, The order of the configs in the list should be
-            consistent with corresponding ffn in operation_order.
-            If it is a dict, all of the attention modules in operation_order
-            will be built with this config.
-        operation_order (tuple[str]): The execution order of operation
-            in transformer. Such as ('self_attn', 'norm', 'ffn', 'norm').
-            Support `prenorm` when you specifying first element as `norm`.
-            Default：None.
-        norm_cfg (dict): Config dict for normalization layer.
-            Default: dict(type='LN').
-        init_cfg (obj:`mmcv.ConfigDict`): The Config for initialization.
-            Default: None.
-        batch_first (bool): Key, Query and Value are shape
-            of (batch, n, embed_dim)
-            or (n, batch, embed_dim). Default to False.
+        attn_cfgs: Config dicts for attention modules.
+        ffn_cfgs: Config dict(s) for FFN modules.
+        use_time_mlp (bool): Whether to apply time-conditioned modulation.
+        operation_order (tuple[str]): Execution order, e.g.
+            ('self_attn', 'norm', 'ffn', 'norm').
+        norm_cfg (dict): Config for normalization layers.
+        batch_first (bool): If True, tensors are (B, N, C); else (N, B, C).
     """
 
     def __init__(
@@ -182,7 +176,7 @@ class BaseTransformerLayerWithTime(BaseModule):
                 )
                 ffn_cfgs[new_name] = kwargs[ori_name]
 
-        super().__init__(init_cfg)
+        super().__init__()
 
         self.batch_first = batch_first
 
@@ -212,7 +206,7 @@ class BaseTransformerLayerWithTime(BaseModule):
         self.operation_order = operation_order
         self.norm_cfg = norm_cfg
         self.pre_norm = operation_order[0] == "norm"
-        self.attentions = ModuleList()
+        self.attentions = nn.ModuleList()
         self.use_time_mlp = use_time_mlp
 
         self.time_mlp = (
@@ -233,7 +227,7 @@ class BaseTransformerLayerWithTime(BaseModule):
                     assert self.batch_first == attn_cfgs[index]["batch_first"]
                 else:
                     attn_cfgs[index]["batch_first"] = self.batch_first
-                attention = build_attention(attn_cfgs[index])
+                attention = _build_attention(attn_cfgs[index])
                 # Some custom attentions used as `self_attn`
                 # or `cross_attn` can have different behavior.
                 attention.operation_name = operation_name
@@ -242,10 +236,8 @@ class BaseTransformerLayerWithTime(BaseModule):
 
         self.embed_dims = self.attentions[0].embed_dims
 
-        self.ffns = ModuleList()
+        self.ffns = nn.ModuleList()
         num_ffns = operation_order.count("ffn")
-        if isinstance(ffn_cfgs, dict):
-            ffn_cfgs = ConfigDict(ffn_cfgs)
         if isinstance(ffn_cfgs, dict):
             ffn_cfgs = [copy.deepcopy(ffn_cfgs) for _ in range(num_ffns)]
         assert len(ffn_cfgs) == num_ffns
@@ -254,11 +246,9 @@ class BaseTransformerLayerWithTime(BaseModule):
                 ffn_cfgs[ffn_index]["embed_dims"] = self.embed_dims
             else:
                 assert ffn_cfgs[ffn_index]["embed_dims"] == self.embed_dims
-            self.ffns.append(
-                build_feedforward_network(ffn_cfgs[ffn_index], dict(type="FFN"))
-            )
+            self.ffns.append(_build_ffn(ffn_cfgs[ffn_index]))
 
-        self.norms = ModuleList()
+        self.norms = nn.ModuleList()
         num_norms = operation_order.count("norm")
         for _ in range(num_norms):
             self.norms.append(build_norm_layer(norm_cfg, self.embed_dims)[1])
@@ -277,7 +267,9 @@ class BaseTransformerLayerWithTime(BaseModule):
         **kwargs,
     ):
         """Forward function for `TransformerDecoderLayer`.
+
         **kwargs contains some specific arguments of attentions.
+
         Args:
             query (Tensor): The input query with shape
                 [num_queries, bs, embed_dims] if
@@ -370,6 +362,51 @@ class BaseTransformerLayerWithTime(BaseModule):
             scale, shift = time.chunk(2, dim=2)  # [1, 2, 256] * 2
             query = query * (scale + 1) + shift
 
+        return query
+
+
+class TransformerLayerSequence(nn.Module):
+    """A sequence of transformer layers (replaces mmcv version).
+
+    Builds ``num_layers`` copies of the layer described by
+    ``transformerlayers`` config dict.  State-dict key prefix: ``layers.{i}.…``
+    """
+
+    def __init__(self, transformerlayers=None, num_layers=None, init_cfg=None):
+        super().__init__()
+        self.layers = nn.ModuleList()
+        for _ in range(num_layers):
+            cfg = copy.deepcopy(transformerlayers)
+            layer_type = cfg.pop("type")
+            if layer_type == "BaseTransformerLayerWithTime":
+                self.layers.append(BaseTransformerLayerWithTime(**cfg))
+            else:
+                raise ValueError(f"Unknown transformer layer type: {layer_type}")
+        self.embed_dims = self.layers[0].embed_dims
+        self.pre_norm = self.layers[0].pre_norm
+
+    def forward(
+        self,
+        query,
+        key,
+        value,
+        query_pos=None,
+        key_pos=None,
+        query_key_padding_mask=None,
+        key_padding_mask=None,
+        **kwargs,
+    ):
+        for layer in self.layers:
+            query = layer(
+                query,
+                key,
+                value,
+                query_pos=query_pos,
+                key_pos=key_pos,
+                query_key_padding_mask=query_key_padding_mask,
+                key_padding_mask=key_padding_mask,
+                **kwargs,
+            )
         return query
 
 

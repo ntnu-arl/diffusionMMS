@@ -26,11 +26,83 @@
 # Originated from https://github.com/SHI-Labs/NATTEN/blob/main/src/natten/natten2d.py
 # --------------------------------------------------------
 import torch
+import torch.nn.functional as F
 from torch import nn
 from torch.nn.functional import pad
 from torch.nn.init import trunc_normal_
 
-from natten.functional import na2d_qk, na2d_av
+
+def na2d_qk(q, k, kernel_size, dilation, rpb=None):
+    """Compute 2D neighborhood attention QK scores (pure PyTorch).
+
+    Args:
+        q: (B, num_heads, H, W, head_dim) – already scaled.
+        k: (B, num_heads, H, W, head_dim).
+        kernel_size: int, odd.
+        dilation: int.
+        rpb: (num_heads, 2*kernel_size-1, 2*kernel_size-1) or None.
+
+    Returns:
+        attn: (B, num_heads, H, W, kernel_size**2).
+    """
+    B, num_heads, H, W, head_dim = q.shape
+    BN = B * num_heads
+    K = kernel_size
+    K2 = K * K
+    pad_size = (K // 2) * dilation
+
+    # Unfold k into (BN, H*W, K*K, head_dim)
+    k_4d = k.reshape(BN, H, W, head_dim).permute(0, 3, 1, 2).contiguous()
+    k_uf = F.unfold(k_4d, kernel_size=K, dilation=dilation, padding=pad_size)
+    k_uf = k_uf.view(BN, head_dim, K2, H * W).permute(0, 3, 2, 1)
+
+    # Validity mask – 0 for positions that fall outside the original tensor
+    mask_1 = torch.ones(1, 1, H, W, device=q.device, dtype=q.dtype)
+    mask_uf = F.unfold(mask_1, kernel_size=K, dilation=dilation, padding=pad_size)
+    valid = mask_uf.squeeze(0).t() > 0.5  # (H*W, K*K)
+
+    # QK dot product
+    q_flat = q.reshape(BN, H * W, head_dim)
+    attn = torch.einsum("bnc,bnkc->bnk", q_flat, k_uf)  # (BN, H*W, K*K)
+
+    # Mask invalid (padded) positions
+    attn = attn.masked_fill(~valid.unsqueeze(0), float("-inf"))
+
+    # Relative position bias – index the centre K×K block of the (2K-1)×(2K-1) table
+    if rpb is not None:
+        off = (K - 1) // 2  # offset to centre of RPB table
+        idx = torch.arange(K, device=rpb.device) + off
+        rpb_bias = rpb[:, idx][:, :, idx]  # (num_heads, K, K)
+        rpb_bias = rpb_bias.reshape(1, num_heads, 1, K2)
+        attn = attn.view(B, num_heads, H * W, K2) + rpb_bias
+        attn = attn.reshape(BN, H * W, K2)
+
+    return attn.view(B, num_heads, H, W, K2)
+
+
+def na2d_av(attn, v, kernel_size, dilation):
+    """Apply 2D neighborhood attention weights to values (pure PyTorch).
+
+    Args:
+        attn: (B, num_heads, H, W, kernel_size**2) – post-softmax.
+        v:    (B, num_heads, H, W, head_dim).
+
+    Returns:
+        out:  (B, num_heads, H, W, head_dim).
+    """
+    B, num_heads, H, W, head_dim = v.shape
+    BN = B * num_heads
+    K = kernel_size
+    K2 = K * K
+    pad_size = (K // 2) * dilation
+
+    v_4d = v.reshape(BN, H, W, head_dim).permute(0, 3, 1, 2).contiguous()
+    v_uf = F.unfold(v_4d, kernel_size=K, dilation=dilation, padding=pad_size)
+    v_uf = v_uf.view(BN, head_dim, K2, H * W).permute(0, 3, 2, 1)  # (BN, H*W, K*K, head_dim)
+
+    a_flat = attn.reshape(BN, H * W, K2)
+    out = torch.einsum("bnk,bnkc->bnc", a_flat, v_uf)
+    return out.view(B, num_heads, H, W, head_dim)
 
 
 class NeighborhoodAttention2D(nn.Module):

@@ -1,11 +1,10 @@
-from mmseg.models.necks import FPN
-from mmengine.model import BaseModule
-from mmcv.cnn import ConvModule
-from mmseg.models.utils import resize
 import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from models.common_layers import ConvModule, FPN
 
 
-class MultiStageMerging(BaseModule):
+class MultiStageMerging(nn.Module):
     def __init__(
         self,
         in_channels=[256, 256, 256, 256],
@@ -15,10 +14,10 @@ class MultiStageMerging(BaseModule):
         norm_cfg=dict(type="GN", num_groups=32),
         act_cfg=None,
         align_corners=False,
-        init_cfg=dict(type="Xavier", layer="Conv2d", distribution="uniform"),
+        init_cfg=None,
         **kwargs
     ):
-        super(MultiStageMerging, self).__init__(init_cfg)
+        super().__init__()
         assert isinstance(in_channels, list)
         self.in_channels = in_channels
         self.out_channels = out_channels
@@ -38,7 +37,7 @@ class MultiStageMerging(BaseModule):
         outs = list()
         size = inputs[0].shape[2:]
         for index, input in enumerate(inputs):
-            input = resize(
+            input = F.interpolate(
                 input, size=size, mode="bilinear", align_corners=self.align_corners
             )
             outs.append(input)

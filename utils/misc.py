@@ -8,7 +8,7 @@ logger = get_root_logger()
 
 def load_dual_dat_pretrained_model(model, model_file):
     logger.info(f"Loading pretrained from {model_file}")
-    pretrained = torch.load(model_file)
+    pretrained = torch.load(model_file, weights_only=False)
     state_dict = {}
     for key, value in pretrained["state_dict"].items():
         if "backbone." in key:
@@ -27,7 +27,7 @@ def load_dual_dat_pretrained_model(model, model_file):
 
 def load_model_to_resume(args, model, optimizer):
     if args.resume:
-        checkpoint = torch.load(args.resume, map_location="cpu")
+        checkpoint = torch.load(args.resume, map_location="cpu", weights_only=False)
         model.load_state_dict(checkpoint["model"])
         logger.info("Resume checkpoint %s" % args.resume)
         if (
