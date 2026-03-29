@@ -1,4 +1,5 @@
 result/
+pretrained/
 log/
 data
 output_dir/
