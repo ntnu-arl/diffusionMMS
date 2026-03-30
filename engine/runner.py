@@ -1,5 +1,7 @@
 import os
+import json
 import torch
+from omegaconf import OmegaConf
 from utils.logger import get_root_logger
 from utils import misc, lr_policy
 import time
@@ -75,6 +77,7 @@ class Trainer:
         best_iou = 0.0
         best_epoch = -1
         eval_results_path = os.path.join(output_dir, "eval_results.txt")
+        self._last_epoch_loss = {}
 
         for epoch in range(start_epoch, train_cfg.num_epochs + 1):
             self.epoch = epoch
@@ -130,6 +133,92 @@ class Trainer:
         total_time_str = str(datetime.timedelta(seconds=int(total_time)))
         logger.info("Training time {}".format(total_time_str))
 
+        # Save experiment summary for tracking
+        self._save_experiment_summary(
+            output_dir, total_time, best_epoch, best_iou, self._last_epoch_loss
+        )
+
+    def _get_hparams(self):
+        """Extract key hyperparameters from config as a flat dict."""
+        cfg = self.cfg
+        train_cfg = self.train_cfg
+        crop_size = None
+        ct = getattr(
+            getattr(train_cfg.dataset, "common_transforms", None),
+            "semseg_transform", None,
+        )
+        if ct is not None:
+            crop_size = list(ct.params.crop_size)
+
+        return {
+            "backbone": cfg.model.params.backbone.name,
+            "decoder": cfg.model.params.decoder.name,
+            "num_classes": cfg.model.params.decoder.params.num_classes,
+            "pretrained": str(getattr(cfg.model.params, "pretrained", None)),
+            "timesteps": cfg.model.params.timesteps,
+            "bit_scale": cfg.model.params.bit_scale,
+            "accumulation": cfg.model.params.accumulation,
+            "aux_rate": cfg.model.params.train_cfg.aux_rate,
+            "lr": train_cfg.lr,
+            "optimizer": train_cfg.opt_name,
+            "weight_decay": train_cfg.weight_decay,
+            "batch_size": train_cfg.batch_size,
+            "num_epochs": train_cfg.num_epochs,
+            "warmup_iter": train_cfg.warmup_iter,
+            "lr_power": train_cfg.lr_power,
+            "crop_size": crop_size,
+            "train_scale_array": list(train_cfg.train_scale_array),
+        }
+
+    def _save_experiment_summary(self, output_dir, total_time, best_epoch,
+                                 best_iou, last_epoch_loss):
+        """Save config snapshot and structured summary to output_dir."""
+        # 1. Save full config YAML
+        OmegaConf.save(self.cfg, os.path.join(output_dir, "config.yaml"))
+
+        # 2. Build structured summary
+        hparams = self._get_hparams()
+        final_loss = None
+        if last_epoch_loss and "total_loss" in last_epoch_loss:
+            v = last_epoch_loss["total_loss"]
+            final_loss = float(v.item() if hasattr(v, "item") else v)
+            final_loss = round(final_loss / len(self.train_loader), 4)
+
+        summary = {
+            "experiment_name": self.cfg.experiment_name,
+            "experiment_dataset": self.cfg.experiment_dataset,
+            "hparams": hparams,
+            "metrics": {
+                "best_mIoU": round(best_iou, 4) if best_epoch > 0 else None,
+                "best_epoch": best_epoch if best_epoch > 0 else None,
+                "final_train_loss": final_loss,
+                "training_time_s": round(total_time, 1),
+            },
+        }
+        summary_path = os.path.join(output_dir, "experiment_summary.json")
+        with open(summary_path, "w") as f:
+            json.dump(summary, f, indent=2)
+        logger.info(f"Experiment summary saved to {summary_path}")
+
+        # 3. Log hparams + metrics to TensorBoard
+        if hasattr(self, "log_writer"):
+            # TensorBoard hparams only accepts scalar values
+            tb_hparams = {}
+            for k, v in hparams.items():
+                if isinstance(v, (int, float, bool)):
+                    tb_hparams[k] = v
+                elif isinstance(v, str):
+                    tb_hparams[k] = v
+                elif isinstance(v, list):
+                    tb_hparams[k] = str(v)
+            tb_metrics = {
+                "hparam/best_mIoU": best_iou if best_epoch > 0 else 0.0,
+                "hparam/best_epoch": float(best_epoch),
+            }
+            if final_loss is not None:
+                tb_metrics["hparam/final_train_loss"] = final_loss
+            self.log_writer.add_hparams(tb_hparams, tb_metrics)
+
     def train_one_epoch(self):
         cfg = self.train_cfg
         num_iters = len(self.train_loader)
@@ -183,6 +272,7 @@ class Trainer:
                 )
                 logger.info(print_str)
 
+        self._last_epoch_loss = sum_loss
         self.log_writer.add_scalar(
             "train_loss",
             sum_loss["total_loss"] / num_iters,

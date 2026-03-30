@@ -42,7 +42,7 @@ train:
   device: cuda
   resume: ~
   # Train config
-  batch_size: 4
+  batch_size: 16
   num_workers: 16
   drop_last: True
   lr: 6e-5
@@ -53,8 +53,8 @@ train:
   warmup_epoch: 10
   warmup_iter: 1500
   train_scale_array: [0.5, 0.75, 1, 1.25, 1.5, 1.75]
-  saving_interval: 1
-  start_saving_epoch: 1
+  saving_interval: 2
+  start_saving_epoch: 20
   eval_last_n_epochs: 10
 
   # Dataset
