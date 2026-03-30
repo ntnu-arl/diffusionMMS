@@ -1,4 +1,5 @@
 import os
+import torch
 from utils.logger import get_root_logger
 from utils import misc, lr_policy
 import time
@@ -31,6 +32,9 @@ class Trainer:
             self.train_cfg.warmup_iter,
         )
 
+        # Log frequency: every N iterations instead of every iteration
+        self.log_interval = getattr(self.train_cfg, "log_interval", 50)
+
     def train(self):
         train_cfg = self.train_cfg
         self.device = train_cfg.device
@@ -44,7 +48,13 @@ class Trainer:
                 )
             )
 
+        # cuDNN auto-tuner: finds fastest convolution algorithms for fixed input sizes
+        torch.backends.cudnn.benchmark = True
+
         self.model.to(self.device)
+
+        # AMP: automatic mixed precision
+        self.scaler = torch.amp.GradScaler("cuda")
 
         start_epoch = 1
         if train_cfg.resume is not None:
@@ -122,49 +132,60 @@ class Trainer:
 
     def train_one_epoch(self):
         cfg = self.train_cfg
+        num_iters = len(self.train_loader)
+        sum_loss = {}
+
         for data_iter_step, samples in enumerate(self.train_loader):
-            rgb = samples["rgb"].to(cfg.device)
-            depth = samples["depth"].to(cfg.device) if "depth" in samples else None
-            label = samples["label"].to(cfg.device)
+            # Non-blocking transfers (works with pin_memory=True)
+            rgb = samples["rgb"].to(cfg.device, non_blocking=True)
+            depth = samples["depth"].to(cfg.device, non_blocking=True) if "depth" in samples else None
+            label = samples["label"].to(cfg.device, non_blocking=True)
 
-            losses = self.model(rgb, depth, label)
-            if data_iter_step == 0:
-                sum_loss = dict()
-                for key in losses.keys():
-                    sum_loss[key] = 0
+            # AMP forward pass
+            with torch.amp.autocast("cuda"):
+                losses = self.model(rgb, depth, label)
 
-            self.optimizer.zero_grad()
-            losses["total_loss"].backward()
-            self.optimizer.step()
+            # Faster than zero_grad(): sets gradients to None instead of zero
+            self.optimizer.zero_grad(set_to_none=True)
 
-            current_step = (self.epoch - 1) * len(self.train_loader) + data_iter_step
+            # AMP backward + step
+            self.scaler.scale(losses["total_loss"]).backward()
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
+
+            current_step = (self.epoch - 1) * num_iters + data_iter_step
             lr = self.scheduler.get_lr(current_step)
 
             for param_group in self.optimizer.param_groups:
                 param_group["lr"] = lr
 
-            print_loss_str = ""
-
+            # Accumulate losses (detached to avoid holding the graph)
             for key in losses.keys():
-                sum_loss[key] += losses[key]
-                print_loss_str += " %s=%.4f" % (
-                    key,
-                    (sum_loss[key] / (data_iter_step + 1)),
+                val = losses[key].detach() if hasattr(losses[key], "detach") else losses[key]
+                if key not in sum_loss:
+                    sum_loss[key] = val
+                else:
+                    sum_loss[key] += val
+
+            # Log only every N steps to reduce overhead
+            if (data_iter_step + 1) % self.log_interval == 0 or (data_iter_step + 1) == num_iters:
+                print_loss_str = ""
+                for key in sum_loss.keys():
+                    print_loss_str += " %s=%.4f" % (
+                        key,
+                        (sum_loss[key] / (data_iter_step + 1)),
+                    )
+                print_str = (
+                    "Epoch {}/{}".format(self.epoch, cfg.num_epochs)
+                    + " Iter {}/{}:".format(data_iter_step + 1, num_iters)
+                    + " lr=%.4e" % lr
+                    + print_loss_str
                 )
-
-            print_str = (
-                "Epoch {}/{}".format(self.epoch, cfg.num_epochs)
-                + " Iter {}/{}:".format(data_iter_step + 1, len(self.train_loader))
-                + " lr=%.4e" % lr
-                + print_loss_str
-            )
-
-            del losses
-            logger.info(print_str)
+                logger.info(print_str)
 
         self.log_writer.add_scalar(
             "train_loss",
-            sum_loss["total_loss"] / len(self.train_loader),
+            sum_loss["total_loss"] / num_iters,
             self.epoch,
         )
         self.log_writer.add_scalar("lr", lr, self.epoch)

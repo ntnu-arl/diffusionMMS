@@ -16,12 +16,16 @@ def main(config):
     train_cfg = config.train
     train_dataset = get_dataset(config.experiment_dataset, train_cfg.dataset)
 
+    num_workers = train_cfg.num_workers
     train_loader = DataLoader(
         train_dataset,
         batch_size=train_cfg.batch_size,
         shuffle=True,
-        num_workers=train_cfg.num_workers,
+        num_workers=num_workers,
         drop_last=train_cfg.drop_last,
+        pin_memory=True,
+        persistent_workers=num_workers > 0,
+        prefetch_factor=2 if num_workers > 0 else None,
     )
 
     model = get_model(model_name=config.model.name, **config.model.params)

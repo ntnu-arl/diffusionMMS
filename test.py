@@ -20,6 +20,8 @@ if __name__ == "__main__":
 
     config = OmegaConf.load(args.config)
     model = get_model(config.model.name, eval=True, **config.model.params)
+    model.cuda()
+    model.eval()
     checkpoint_path = os.path.join(
         "output_dir/",
         config.experiment_dataset,

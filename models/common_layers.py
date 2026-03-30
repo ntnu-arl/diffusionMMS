@@ -186,13 +186,15 @@ def multi_scale_deformable_attn_pytorch(value, value_spatial_shapes, sampling_lo
     bs, _, num_heads, embed_dims = value.shape
     _, num_queries, _, num_levels, num_points, _ = sampling_locations.shape
 
+    # Move spatial shapes to CPU once to avoid per-level GPU sync
+    spatial_shapes_cpu = value_spatial_shapes.cpu().tolist()
+
     value_list = value.split(
-        [H.item() * W.item() for H, W in value_spatial_shapes], dim=1
+        [H * W for H, W in spatial_shapes_cpu], dim=1
     )
     sampling_grids = 2 * sampling_locations - 1
     sampling_value_list = []
-    for lid_, (H_, W_) in enumerate(value_spatial_shapes):
-        H_, W_ = H_.item(), W_.item()
+    for lid_, (H_, W_) in enumerate(spatial_shapes_cpu):
         # (bs, H_*W_, num_heads, embed_dims) -> (bs*num_heads, embed_dims, H_, W_)
         value_l_ = (
             value_list[lid_].flatten(2).transpose(1, 2).reshape(bs * num_heads, embed_dims, H_, W_)

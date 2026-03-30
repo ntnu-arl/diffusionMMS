@@ -21,6 +21,8 @@ if __name__ == "__main__":
 
     config = OmegaConf.load(args.config)
     model = get_model(config.model.name, eval=True, **config.model.params)
+    model.cuda()
+    model.eval()
     segmentor = Evaluator(config, model, args.show)
     best_iou = 0
     for epoch in range(args.fr, args.to + 1):

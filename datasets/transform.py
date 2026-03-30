@@ -52,11 +52,11 @@ def pad_image_to_shape(img, shape, border_mode, value):
 
 
 def random_mirror(**kwargs):
-    res = {}
     if random.random() >= 0.5:
+        res = {}
         for key, value in kwargs.items():
             res[key] = cv2.flip(np.array(value), 1)
-        return kwargs
+        return res
     else:
         return kwargs
 

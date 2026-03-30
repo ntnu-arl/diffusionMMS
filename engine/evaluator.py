@@ -22,7 +22,11 @@ class Evaluator:
 
         val_dataset = get_dataset(cfg.experiment_dataset, self.val_cfg.dataset)
         self.val_loader = DataLoader(
-            val_dataset, batch_size=self.val_cfg.batch_size, shuffle=False
+            val_dataset,
+            batch_size=self.val_cfg.batch_size,
+            shuffle=False,
+            pin_memory=True,
+            num_workers=getattr(self.val_cfg, "num_workers", 4),
         )
         self.class_names = val_dataset.get_classname()
         self.num_classes = len(self.class_names)
@@ -214,12 +218,11 @@ class Evaluator:
         return result_line, meanIoU
 
     def eval(self, data):
-        self.model.eval()
+        # model.eval() and .cuda() are assumed to be set by the caller
         for key, value in data.items():
             if isinstance(value, torch.Tensor):
-                data[key] = value.cuda()
-        self.model = self.model.cuda()
-        with torch.no_grad():
+                data[key] = value.cuda(non_blocking=True)
+        with torch.no_grad(), torch.amp.autocast("cuda"):
             depth = data.get("depth", None)
             score = self.model.sampling(data["rgb"], depth)
         pred = score.argmax(1)
