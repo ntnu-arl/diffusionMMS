@@ -232,3 +232,115 @@ class SunRGBDDataset(DepthDataset):
             "bathtub",
             "bag",
         ]
+
+
+# Camera suffixes that correspond to RGB images in GOOSE dataset
+GOOSE_RGB_SUFFIXES = [
+    "_windshield_vis.png",
+    "_front.png",
+    "_camera_left.png",
+    "_realsense.png",
+]
+
+
+def _scan_goose_pairs(img_root, lbl_root):
+    """Scan GOOSE directory structure and return (image_path, label_path) pairs."""
+    pairs = []
+    seq_dirs = sorted(
+        d for d in os.listdir(img_root)
+        if os.path.isdir(os.path.join(img_root, d))
+    )
+    for seq in seq_dirs:
+        img_dir = os.path.join(img_root, seq)
+        lbl_dir = os.path.join(lbl_root, seq)
+        if not os.path.isdir(lbl_dir):
+            continue
+        for fname in sorted(os.listdir(img_dir)):
+            if not fname.endswith(".png"):
+                continue
+            # Only keep RGB camera types
+            base = None
+            for suffix in GOOSE_RGB_SUFFIXES:
+                if fname.endswith(suffix):
+                    base = fname[: -len(suffix)]
+                    break
+            if base is None:
+                continue
+            label_fname = base + "_labelids.png"
+            label_path = os.path.join(lbl_dir, label_fname)
+            if os.path.exists(label_path):
+                pairs.append((os.path.join(img_dir, fname), label_path))
+    return pairs
+
+
+class GooseDataset(Dataset):
+    GOOSE_CLASSES = [
+        "undefined", "traffic_cone", "snow", "cobble", "obstacle",
+        "leaves", "street_light", "bikeway", "ego_vehicle",
+        "pedestrian_crossing", "road_block", "road_marking", "car",
+        "bicycle", "person", "bus", "forest", "bush", "moss",
+        "traffic_light", "motorcycle", "sidewalk", "curb", "asphalt",
+        "gravel", "boom_barrier", "rail_track", "tree_crown",
+        "tree_trunk", "debris", "crops", "soil", "rider", "animal",
+        "truck", "on_rails", "caravan", "trailer", "building", "wall",
+        "rock", "fence", "guard_rail", "bridge", "tunnel", "pole",
+        "traffic_sign", "misc_sign", "barrier_tape", "kick_scooter",
+        "low_grass", "high_grass", "scenery_vegetation", "sky", "water",
+        "wire", "outlier", "heavy_machinery", "container", "hedge",
+        "barrel", "pipe", "tree_root", "military_vehicle",
+    ]
+
+    def __init__(
+        self,
+        root,
+        split,
+        transforms=None,
+        common_transforms=None,
+        **kwargs,
+    ):
+        self.CLASSES = list(self.GOOSE_CLASSES)
+        self.root_dir = root
+        self.split = split
+        self.transforms = transforms
+        self.common_transforms = common_transforms
+
+        img_root = os.path.join(root, "images", split)
+        lbl_root = os.path.join(root, "labels", split)
+        if not os.path.isdir(img_root):
+            raise FileNotFoundError(f"Image directory not found: {img_root}")
+        if not os.path.isdir(lbl_root):
+            raise FileNotFoundError(f"Label directory not found: {lbl_root}")
+
+        self.pairs = _scan_goose_pairs(img_root, lbl_root)
+        logger.info(
+            f"GooseDataset [{split}]: found {len(self.pairs)} image-label pairs"
+        )
+
+    def __getitem__(self, index):
+        output = {}
+        img_path, lbl_path = self.pairs[index]
+
+        rgb = Image.open(img_path).convert("RGB")
+        output["rgb"] = rgb
+
+        label = cv2.imread(lbl_path, cv2.IMREAD_GRAYSCALE)
+        # Class 0 is "undefined" -> map to 255 (ignore_index)
+        label[label == 0] = 255
+        output["label"] = label
+
+        if self.common_transforms is not None:
+            output = self.common_transforms(**output)
+
+        if self.transforms is not None:
+            output["rgb"] = self.transforms(output["rgb"])
+
+        return output
+
+    def get_classname(self):
+        return self.CLASSES
+
+    def num_classes(self):
+        return len(self.CLASSES)
+
+    def __len__(self):
+        return len(self.pairs)

@@ -4,6 +4,7 @@ from torch.utils.data import DataLoader
 from datasets import get_dataset
 from engine import get_model, get_optimizer
 from engine.runner import Trainer
+from engine.evaluator import Evaluator
 from utils.init_func import group_weight
 import torch
 
@@ -33,7 +34,13 @@ def main(config):
         weight_decay=train_cfg.weight_decay,
     )
 
-    runner = Trainer(config, model, optimizer, train_loader, val_loader=None)
+    evaluator = None
+    eval_last_n = getattr(train_cfg, "eval_last_n_epochs", 0)
+    if eval_last_n > 0:
+        evaluator = Evaluator(config, model, show=False)
+
+    runner = Trainer(config, model, optimizer, train_loader, val_loader=None,
+                     evaluator=evaluator)
     runner.train()
 
 

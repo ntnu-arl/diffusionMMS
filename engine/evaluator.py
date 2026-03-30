@@ -137,7 +137,9 @@ class Evaluator:
         pred_arr = pred.squeeze(0).cpu().numpy().astype(np.uint8)
         rgb_arr = data["rgb"].squeeze(0).cpu().numpy()
         pred_arr[pred_arr > self.num_classes] = self.num_classes
-        if data["depth"] is not None:
+
+        has_depth = "depth" in data and data["depth"] is not None
+        if has_depth:
             depth_arr = data["depth"].squeeze(0).cpu().numpy()
         colored_pred = np.zeros_like(pred_arr)
         colored_pred = np.stack((colored_pred,) * 3, axis=-1)
@@ -160,12 +162,17 @@ class Evaluator:
             np.uint8
         )
         rgb_arr = cv2.cvtColor(rgb_arr, cv2.COLOR_RGB2BGR)
-        depth_arr = (depth_arr.transpose(1, 2, 0) * 255).astype(np.uint8)
 
         # Concatenate multiple outputs for saving
-        output = np.concatenate(
-            [rgb_arr, depth_arr, colored_label, colored_pred], axis=1
-        )
+        if has_depth:
+            depth_arr = (depth_arr.transpose(1, 2, 0) * 255).astype(np.uint8)
+            output = np.concatenate(
+                [rgb_arr, depth_arr, colored_label, colored_pred], axis=1
+            )
+        else:
+            output = np.concatenate(
+                [rgb_arr, colored_label, colored_pred], axis=1
+            )
 
         # Save results
         if self.val_cfg.save_path is not None:
@@ -181,14 +188,39 @@ class Evaluator:
             if cv2.waitKey() == ord("q"):
                 exit(0)
 
+    def run_inline(self, epoch):
+        """Evaluate model already in memory (no checkpoint loading).
+        Returns (result_line, meanIoU)."""
+        all_results = []
+        for _, data in enumerate(tqdm(self.val_loader)):
+            label = data["label"].squeeze(1)
+            pred = self.eval(data)
+            pred_trunc = np.array(pred.cpu())
+            pred_trunc[pred_trunc >= self.num_classes] = self.num_classes
+            hist_tmp, labeled_tmp, correct_tmp = hist_info(
+                self.num_classes,
+                pred_trunc,
+                np.array(label.cpu()),
+                excluded_labels=self.excluded_labels,
+            )
+            all_results.append({
+                "hist": hist_tmp,
+                "labeled": labeled_tmp,
+                "correct": correct_tmp,
+            })
+
+        result_line, meanIoU = self.compute_metric(all_results)
+        logger.info(f"Epoch {epoch} mIoU: {meanIoU:.4f}")
+        return result_line, meanIoU
+
     def eval(self, data):
         self.model.eval()
         for key, value in data.items():
-            data[key] = value.cuda()
+            if isinstance(value, torch.Tensor):
+                data[key] = value.cuda()
         self.model = self.model.cuda()
         with torch.no_grad():
-            if "depth" not in data.keys():
-                data["depth"] = None
-            score = self.model.sampling(data["rgb"], data["depth"])
+            depth = data.get("depth", None)
+            score = self.model.sampling(data["rgb"], depth)
         pred = score.argmax(1)
         return pred

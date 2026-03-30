@@ -8,6 +8,7 @@ from einops import rearrange, repeat
 from utils.logger import get_root_logger
 from models.common_layers import ConvModule
 from models.decoder.neck import MultiStageMerging
+from models.backbone.single_dat import Single_DAT
 
 logger = get_root_logger()
 
@@ -141,6 +142,8 @@ class DiffusionMMS(nn.Module):
             nn.Linear(time_dim, time_dim),  # [2, 1024]
         )
 
+        self.rgb_only = isinstance(self.backbone, Single_DAT)
+
         if not eval:
             self.init_weights(pretrained=pretrained)
 
@@ -149,14 +152,17 @@ class DiffusionMMS(nn.Module):
             self.backbone.init_weights(pretrained=pretrained)
         logger.info("Initing weights ...")
 
-    def extract_feat(self, rgb, depth):
-        x = self.backbone(rgb, depth)
+    def extract_feat(self, rgb, depth=None):
+        if self.rgb_only:
+            x = self.backbone(rgb)
+        else:
+            x = self.backbone(rgb, depth)
         x_outs = self.neck(x)
         x_out = self.merging(x_outs)
 
         return x_out[0]
 
-    def sampling(self, rgb, depth):
+    def sampling(self, rgb, depth=None):
         orisize = rgb.shape
         x = self.extract_feat(rgb, depth)
 
@@ -168,7 +174,7 @@ class DiffusionMMS(nn.Module):
         return out
 
     def forward_train(self, rgb, depth, label):
-        x = self.extract_feat(rgb, depth)
+        x = self.extract_feat(rgb, depth=depth)
 
         b, c, h, w, device = *x.shape, x.device
         label_down = F.interpolate(

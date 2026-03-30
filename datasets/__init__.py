@@ -1,6 +1,6 @@
 from .transform import SemSegTransform, CustomCompose
 from omegaconf.dictconfig import DictConfig
-from .datasets import NYUv2Dataset, SunRGBDDataset
+from .datasets import NYUv2Dataset, SunRGBDDataset, GooseDataset
 from utils.logger import get_root_logger
 import torchvision.transforms as T
 
@@ -15,7 +15,10 @@ ALL_TRANSFORM = {
 ALL_DATASETS = {
     "nyuv2": NYUv2Dataset,
     "sunrgbd": SunRGBDDataset,
+    "goose": GooseDataset,
 }
+# Datasets that do not have depth modality
+RGB_ONLY_DATASETS = {"goose"}
 logger = get_root_logger()
 
 
@@ -28,18 +31,17 @@ def get_dataset(name, cfg):
 
     transforms = get_transform(cfg.transforms)
     common_transforms = get_common_transform(cfg.common_transforms)
-    if name != "ade":
+    if name in RGB_ONLY_DATASETS:
+        return ALL_DATASETS[name](
+            **cfg.params, transforms=transforms, common_transforms=common_transforms
+        )
+    else:
         depth_transforms = get_transform(cfg.depth_transforms)
-
         return ALL_DATASETS[name](
             **cfg.params,
             transforms=transforms,
             depth_transforms=depth_transforms,
             common_transforms=common_transforms
-        )
-    else:
-        return ALL_DATASETS[name](
-            **cfg.params, transforms=transforms, common_transforms=common_transforms
         )
 
 

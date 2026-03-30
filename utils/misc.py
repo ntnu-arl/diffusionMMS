@@ -25,6 +25,20 @@ def load_dual_dat_pretrained_model(model, model_file):
     logger.info("Successfully load DAT++ pretrained model")
 
 
+def load_single_dat_pretrained_model(model, model_file):
+    logger.info(f"Loading pretrained from {model_file}")
+    pretrained = torch.load(model_file, weights_only=False)
+    state_dict = {}
+    for key, value in pretrained["state_dict"].items():
+        if "backbone." in key:
+            new_key = key[9:]  # strip "backbone." prefix
+            state_dict[new_key] = value
+
+    model.load_state_dict(state_dict, strict=False)
+    del state_dict
+    logger.info("Successfully load single-branch DAT pretrained model")
+
+
 def load_model_to_resume(args, model, optimizer):
     if args.resume:
         checkpoint = torch.load(args.resume, map_location="cpu", weights_only=False)
