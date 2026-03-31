@@ -8,9 +8,14 @@ DiffusionMMS — Diffusion-based RGB-D Semantic Segmentation with Deformable Att
 
 ## Commands
 
-### Training
+### Training (single GPU)
 ```bash
 python train.py --config config/goose/goose_dat_s_epoch_100.yaml
+```
+
+### Training (multi-GPU with DDP)
+```bash
+torchrun --nproc_per_node=4 train.py --config config/goose/goose_dat_s_epoch_100.yaml
 ```
 
 ### Evaluation (range of epochs)

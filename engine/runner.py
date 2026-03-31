@@ -1,6 +1,7 @@
 import os
 import json
 import torch
+import torch.distributed as dist
 from omegaconf import OmegaConf
 from utils.logger import get_root_logger
 from utils import misc, lr_policy
@@ -14,7 +15,7 @@ logger = get_root_logger()
 
 class Trainer:
     def __init__(self, config, model, optimizer, train_loader, val_loader=None,
-                 evaluator=None):
+                 evaluator=None, rank=0, world_size=1):
         self.optimizer = optimizer
         self.train_loader = train_loader
         self.val_loader = val_loader
@@ -24,6 +25,9 @@ class Trainer:
         self.trainer_timer = Timer()
         self.logger = get_root_logger()
         self.evaluator = evaluator
+        self.rank = rank
+        self.world_size = world_size
+        self.distributed = world_size > 1
 
         niters_per_epoch = len(self.train_loader)
         total_iteration = self.train_cfg.num_epochs * niters_per_epoch
@@ -37,23 +41,35 @@ class Trainer:
         # Log frequency: every N iterations instead of every iteration
         self.log_interval = getattr(self.train_cfg, "log_interval", 50)
 
+    @property
+    def is_main(self):
+        return self.rank == 0
+
+    def _unwrap_model(self):
+        """Get the underlying model (unwrap DDP if needed)."""
+        if self.distributed:
+            return self.model.module
+        return self.model
+
     def train(self):
         train_cfg = self.train_cfg
         self.device = train_cfg.device
-        os.makedirs(train_cfg.log_dir, exist_ok=True)
-        if train_cfg.log_dir is not None:
-            self.log_writer = SummaryWriter(
-                log_dir=os.path.join(
-                    train_cfg.log_dir,
-                    self.cfg.experiment_dataset,
-                    self.cfg.experiment_name,
+        if self.is_main:
+            os.makedirs(train_cfg.log_dir, exist_ok=True)
+            if train_cfg.log_dir is not None:
+                self.log_writer = SummaryWriter(
+                    log_dir=os.path.join(
+                        train_cfg.log_dir,
+                        self.cfg.experiment_dataset,
+                        self.cfg.experiment_name,
+                    )
                 )
-            )
 
         # cuDNN auto-tuner: finds fastest convolution algorithms for fixed input sizes
         torch.backends.cudnn.benchmark = True
 
-        self.model.to(self.device)
+        if not self.distributed:
+            self.model.to(self.device)
 
         # AMP: bfloat16 avoids float16 overflow in backward (especially
         # with large backbones + gradient checkpointing).  No GradScaler needed.
@@ -63,14 +79,14 @@ class Trainer:
         if train_cfg.resume is not None:
             logger.info(f"Resume from {train_cfg.resume}")
             start_epoch = misc.load_model_to_resume(
-                train_cfg, self.model, optimizer=self.optimizer
+                train_cfg, self._unwrap_model(), optimizer=self.optimizer
             )
         self.model.train()
         start_time = time.time()
         output_dir = os.path.join(
             train_cfg.output_dir, self.cfg.experiment_dataset, self.cfg.experiment_name
         )
-        if not os.path.exists(output_dir):
+        if self.is_main and not os.path.exists(output_dir):
             os.makedirs(output_dir)
 
         eval_last_n = getattr(train_cfg, "eval_last_n_epochs", 0)
@@ -82,9 +98,14 @@ class Trainer:
 
         for epoch in range(start_epoch, train_cfg.num_epochs + 1):
             self.epoch = epoch
+
+            # DistributedSampler must be told the epoch for proper shuffling
+            if self.distributed:
+                self.train_loader.sampler.set_epoch(epoch)
+
             self.train_one_epoch()
 
-            if (
+            if self.is_main and (
                 train_cfg.output_dir
                 and (
                     epoch % train_cfg.saving_interval == 0
@@ -95,14 +116,14 @@ class Trainer:
                 misc.save_model(
                     args=train_cfg,
                     output_dir=output_dir,
-                    model=self.model,
+                    model=self._unwrap_model(),
                     optimizer=self.optimizer,
                     epoch=epoch,
                 )
 
-            # Evaluate during last N epochs
-            if self.evaluator is not None and epoch >= eval_start_epoch:
-                self.model.eval()
+            # Evaluate during last N epochs (rank 0 only)
+            if self.is_main and self.evaluator is not None and epoch >= eval_start_epoch:
+                self._unwrap_model().eval()
                 result_line, mIoU = self.evaluator.run_inline(epoch)
                 self.log_writer.add_scalar("val_mIoU", mIoU, epoch)
 
@@ -117,27 +138,32 @@ class Trainer:
 
                 self.model.train()
 
-        # Create best.pt symlink
-        if best_epoch > 0:
-            best_ckpt = os.path.join(output_dir, f"checkpoint-{best_epoch}.pth")
-            best_link = os.path.join(output_dir, "best.pt")
-            if os.path.islink(best_link) or os.path.exists(best_link):
-                os.remove(best_link)
-            os.symlink(os.path.abspath(best_ckpt), best_link)
-            logger.info(
-                f"Best epoch: {best_epoch} mIoU: {best_iou:.4f} -> {best_link}"
+            # Sync all ranks before next epoch so rank 0 eval doesn't block
+            if self.distributed:
+                dist.barrier()
+
+        if self.is_main:
+            # Create best.pt symlink
+            if best_epoch > 0:
+                best_ckpt = os.path.join(output_dir, f"checkpoint-{best_epoch}.pth")
+                best_link = os.path.join(output_dir, "best.pt")
+                if os.path.islink(best_link) or os.path.exists(best_link):
+                    os.remove(best_link)
+                os.symlink(os.path.abspath(best_ckpt), best_link)
+                logger.info(
+                    f"Best epoch: {best_epoch} mIoU: {best_iou:.4f} -> {best_link}"
+                )
+                with open(eval_results_path, "a") as f:
+                    f.write(f"Best epoch: {best_epoch}  mIoU: {best_iou:.4f}\n")
+
+            total_time = time.time() - start_time
+            total_time_str = str(datetime.timedelta(seconds=int(total_time)))
+            logger.info("Training time {}".format(total_time_str))
+
+            # Save experiment summary for tracking
+            self._save_experiment_summary(
+                output_dir, total_time, best_epoch, best_iou, self._last_epoch_loss
             )
-            with open(eval_results_path, "a") as f:
-                f.write(f"Best epoch: {best_epoch}  mIoU: {best_iou:.4f}\n")
-
-        total_time = time.time() - start_time
-        total_time_str = str(datetime.timedelta(seconds=int(total_time)))
-        logger.info("Training time {}".format(total_time_str))
-
-        # Save experiment summary for tracking
-        self._save_experiment_summary(
-            output_dir, total_time, best_epoch, best_iou, self._last_epoch_loss
-        )
 
     def _get_hparams(self):
         """Extract key hyperparameters from config as a flat dict."""
@@ -169,6 +195,7 @@ class Trainer:
             "lr_power": train_cfg.lr_power,
             "crop_size": crop_size,
             "train_scale_array": list(train_cfg.train_scale_array),
+            "world_size": self.world_size,
         }
 
     def _save_experiment_summary(self, output_dir, total_time, best_epoch,
@@ -256,8 +283,11 @@ class Trainer:
                 else:
                     sum_loss[key] += val
 
-            # Log only every N steps to reduce overhead
-            if (data_iter_step + 1) % self.log_interval == 0 or (data_iter_step + 1) == num_iters:
+            # Log only every N steps to reduce overhead (rank 0 only)
+            if self.is_main and (
+                (data_iter_step + 1) % self.log_interval == 0
+                or (data_iter_step + 1) == num_iters
+            ):
                 print_loss_str = ""
                 for key in sum_loss.keys():
                     print_loss_str += " %s=%.4f" % (
@@ -273,9 +303,10 @@ class Trainer:
                 logger.info(print_str)
 
         self._last_epoch_loss = sum_loss
-        self.log_writer.add_scalar(
-            "train_loss",
-            sum_loss["total_loss"] / num_iters,
-            self.epoch,
-        )
-        self.log_writer.add_scalar("lr", lr, self.epoch)
+        if self.is_main:
+            self.log_writer.add_scalar(
+                "train_loss",
+                sum_loss["total_loss"] / num_iters,
+                self.epoch,
+            )
+            self.log_writer.add_scalar("lr", lr, self.epoch)

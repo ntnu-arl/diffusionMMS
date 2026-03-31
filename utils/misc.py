@@ -40,9 +40,15 @@ def load_single_dat_pretrained_model(model, model_file):
 
 
 def load_model_to_resume(args, model, optimizer):
+    """Load checkpoint for resuming. `model` should be the unwrapped model
+    (not DDP-wrapped), so state_dict keys match regardless of DDP."""
     if args.resume:
         checkpoint = torch.load(args.resume, map_location="cpu", weights_only=False)
-        model.load_state_dict(checkpoint["model"])
+        state_dict = checkpoint["model"]
+        # Strip 'module.' prefix if checkpoint was saved from DDP
+        if any(k.startswith("module.") for k in state_dict):
+            state_dict = {k.removeprefix("module."): v for k, v in state_dict.items()}
+        model.load_state_dict(state_dict)
         logger.info("Resume checkpoint %s" % args.resume)
         if (
             "optimizer" in checkpoint
