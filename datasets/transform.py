@@ -99,6 +99,27 @@ class SemSegTransform(object):
         return res
 
 
+class ResizeTransform(object):
+    def __init__(self, shorter_side):
+        self.shorter_side = shorter_side
+
+    def __call__(self, **kwargs):
+        # Determine scale from the first value
+        first = np.array(next(iter(kwargs.values())))
+        h_orig, w_orig = first.shape[:2]
+        scale = self.shorter_side / min(h_orig, w_orig)
+        h_new = int(h_orig * scale)
+        w_new = int(w_orig * scale)
+        res = {}
+        for key, value in kwargs.items():
+            value = np.array(value)
+            if key == "label":
+                res[key] = cv2.resize(value, (w_new, h_new), interpolation=cv2.INTER_NEAREST)
+            else:
+                res[key] = cv2.resize(value, (w_new, h_new), interpolation=cv2.INTER_LINEAR)
+        return res
+
+
 class CustomCompose:
     def __init__(self, transforms):
         self.transforms = transforms

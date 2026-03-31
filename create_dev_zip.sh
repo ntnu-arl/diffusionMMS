@@ -1,0 +1,1 @@
+  cd submission/ && zip -@ ../dev_submission.zip < ../data/goose_dataset/dev_phase/dev_phase.txt                                                                                                                                                      

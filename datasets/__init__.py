@@ -1,4 +1,4 @@
-from .transform import SemSegTransform, CustomCompose
+from .transform import SemSegTransform, ResizeTransform, CustomCompose
 from omegaconf.dictconfig import DictConfig
 from .datasets import NYUv2Dataset, SunRGBDDataset, GooseDataset
 from utils.logger import get_root_logger
@@ -11,6 +11,7 @@ ALL_TRANSFORM = {
     "normalize": T.Normalize,
     "to_pil": T.ToPILImage,
     "semseg_transform": SemSegTransform,
+    "resize_transform": ResizeTransform,
 }
 ALL_DATASETS = {
     "nyuv2": NYUv2Dataset,

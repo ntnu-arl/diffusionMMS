@@ -8,7 +8,7 @@ import torch
 from torch.utils.data import DataLoader
 from utils.logger import get_root_logger
 from utils.helper import get_class_colors, print_iou
-from .metric import hist_info, compute_score
+from .metric import hist_info, compute_score, goose_compute_scores, GOOSE_FINE_IDS, GOOSE_COARSE_NAMES
 import time
 logger = get_root_logger()
 
@@ -127,6 +127,37 @@ class Evaluator:
             self.class_names,
             show_no_back=False,
         )
+
+        # GOOSE competition metrics
+        if self.cfg.experiment_dataset == "goose":
+            mIoU_fine, mIoU_coarse, mIoU_composite, fine_ious, coarse_ious = \
+                goose_compute_scores(hist, self.num_classes)
+            goose_lines = [
+                "",
+                "===== GOOSE Competition Metrics =====",
+                "--- mIoU_fine (56 classes) ---",
+            ]
+            for idx, c in enumerate(GOOSE_FINE_IDS):
+                if idx < len(fine_ious):
+                    goose_lines.append(
+                        "  %d %-25s\t%.3f%%" % (c, self.class_names[c], fine_ious[idx] * 100)
+                    )
+            goose_lines.append("--- mIoU_coarse (11 superclasses) ---")
+            for idx, name in enumerate(GOOSE_COARSE_NAMES):
+                if idx < len(coarse_ious):
+                    goose_lines.append(
+                        "  %-25s\t%.3f%%" % (name, coarse_ious[idx] * 100)
+                    )
+            goose_lines.append("-------------------------------------")
+            goose_lines.append("mIoU_fine:      %.3f%%" % (mIoU_fine * 100))
+            goose_lines.append("mIoU_coarse:    %.3f%%" % (mIoU_coarse * 100))
+            goose_lines.append("mIoU_composite: %.3f%%" % (mIoU_composite * 100))
+            goose_lines.append("=====================================")
+            goose_str = "\n".join(goose_lines)
+            print(goose_str)
+            result_line += goose_str
+            return result_line, mIoU_composite
+
         return result_line, mean_IoU
 
     def visualize(self, label, data, pred, idx=None):
@@ -194,7 +225,7 @@ class Evaluator:
 
     def run_inline(self, epoch):
         """Evaluate model already in memory (no checkpoint loading).
-        Returns (result_line, meanIoU)."""
+        Returns (result_line, meanIoU) — for GOOSE, meanIoU is mIoU_composite."""
         all_results = []
         for _, data in enumerate(tqdm(self.val_loader)):
             label = data["label"].squeeze(1)
@@ -213,9 +244,9 @@ class Evaluator:
                 "correct": correct_tmp,
             })
 
-        result_line, meanIoU = self.compute_metric(all_results)
-        logger.info(f"Epoch {epoch} mIoU: {meanIoU:.4f}")
-        return result_line, meanIoU
+        result_line, metric = self.compute_metric(all_results)
+        logger.info(f"Epoch {epoch} mIoU: {metric:.4f}")
+        return result_line, metric
 
     def eval(self, data):
         # model.eval() and .cuda() are assumed to be set by the caller

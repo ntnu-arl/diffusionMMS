@@ -1,5 +1,10 @@
 result/
 pretrained/
+.vscode/
+**.zip
+**.png
+**.jpg
+submission/
 log/
 data
 output_dir/

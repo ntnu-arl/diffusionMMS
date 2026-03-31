@@ -96,7 +96,10 @@ val:
       root: "data/goose_dataset"
       split: "val"
 
-    common_transforms: ~
+    common_transforms:
+      resize_transform:
+        params:
+          shorter_side: 480
     transforms:
       to_tensor:
         params: ~
