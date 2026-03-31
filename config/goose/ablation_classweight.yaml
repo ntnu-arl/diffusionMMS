@@ -1,0 +1,109 @@
+# Ablation: Class-weighted CrossEntropy loss
+# Changes from baseline_v2: inverse-frequency class weights (capped at 10x)
+# Expected: significant mIoU_fine boost on rare classes (animal, rider, kick_scooter, etc.)
+experiment_type: "ablation"
+experiment_dataset: "goose"
+experiment_name: "abl_classweight"
+
+model:
+  name: "diffusionmms"
+  params:
+    timesteps: 3
+    bit_scale: 0.01
+    accumulation: True
+    backbone:
+      name: "single_dat_s"
+      params:
+        frozen_stages: -1
+    neck:
+      name: 'fpn'
+      params:
+        out_channels: 256
+    decoder:
+      name: "DeformableDETRwithTime"
+      params:
+        num_classes: 64
+    aux_head:
+      name: "fcn"
+      params:
+        in_channels: 256
+        num_classes: 64
+    norm_layer: "BatchNorm2d"
+    pretrained: pretrained/upn_dat_s_160k.pth
+    # Sqrt-inverse-frequency weights: sqrt(median_freq / class_freq), clipped to [0.25, 5.0]
+    # Gentler than raw inverse-freq to avoid NaN with AMP float16
+    class_weights: [
+      0.2500, 5.0000, 0.3020, 0.4163, 0.3580, 0.3511, 1.7728, 5.0000,
+      0.2792, 5.0000, 2.9595, 0.9131, 0.4969, 4.1513, 1.4278, 2.9185,
+      0.2500, 0.2500, 1.6924, 3.3412, 5.0000, 0.6023, 0.8476, 0.2500,
+      0.2500, 5.0000, 2.0011, 0.2500, 0.2500, 0.3137, 0.4744, 0.2500,
+      5.0000, 5.0000, 0.9307, 4.0726, 3.2317, 1.0474, 0.2675, 0.9780,
+      0.3224, 0.3209, 1.0797, 1.4288, 3.3511, 1.1157, 1.5296, 1.4639,
+      5.0000, 5.0000, 0.2500, 0.2500, 2.2960, 0.2500, 0.7320, 1.7274,
+      5.0000, 0.5782, 0.9900, 0.5692, 1.0103, 5.0000, 5.0000, 5.0000]
+    train_cfg:
+      aux_index: 0
+      aux_rate: 0.4
+      bn_eps: 1e-3
+      bn_momentum: 0.1
+
+train:
+  device: cuda
+  resume: ~
+  batch_size: 16
+  num_workers: 16
+  drop_last: True
+  lr: 6e-5
+  lr_power: 0.9
+  weight_decay: 0.01
+  num_epochs: 200
+  warmup_epoch: 10
+  warmup_iter: 1500
+  train_scale_array: [0.5, 0.75, 1, 1.25, 1.5, 1.75]
+  saving_interval: 5
+  start_saving_epoch: 100
+  eval_last_n_epochs: 20
+
+  dataset:
+    params:
+      root: "data/goose_dataset"
+      split: "train"
+    common_transforms:
+      semseg_transform:
+        params:
+          crop_size: [480, 640]
+          train_scale_array: [0.5, 0.75, 1, 1.25, 1.5, 1.75]
+    transforms:
+      to_tensor:
+        params: ~
+      normalize:
+        params:
+          mean: [0.485, 0.456, 0.406]
+          std: [0.229, 0.224, 0.225]
+
+  opt_name: "adamw"
+  use_tensorboard: True
+  log_dir: log/
+  output_dir: output_dir/
+
+val:
+  batch_size: 1
+  background: 255
+  log_dir: log/eval/
+  save_path: ~
+  show_image: False
+  dataset:
+    params:
+      root: "data/goose_dataset"
+      split: "val"
+    common_transforms:
+      resize_transform:
+        params:
+          shorter_side: 480
+    transforms:
+      to_tensor:
+        params: ~
+      normalize:
+        params:
+          mean: [0.485, 0.456, 0.406]
+          std: [0.229, 0.224, 0.225]

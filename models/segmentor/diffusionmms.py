@@ -67,6 +67,7 @@ class DiffusionMMS(nn.Module):
         accumulation=False,
         norm_layer="BatchNorm2d",
         criterion=nn.CrossEntropyLoss(reduction="mean", ignore_index=255),
+        class_weights=None,
         pretrained=None,
         train_cfg=None,
         eval=False,
@@ -90,7 +91,14 @@ class DiffusionMMS(nn.Module):
         else:
             logger.error("unsupported batchnorm layer")
 
-        self.criterion = criterion
+        if class_weights is not None:
+            w = torch.tensor(class_weights, dtype=torch.float32)
+            self.criterion = nn.CrossEntropyLoss(
+                weight=w, reduction="mean", ignore_index=255
+            )
+            logger.info(f"Using class-weighted CrossEntropyLoss ({len(w)} weights)")
+        else:
+            self.criterion = criterion
         self.train_cfg = train_cfg
 
         # Diffusion parameters
@@ -228,10 +236,11 @@ class DiffusionMMS(nn.Module):
             out = self.forward_train(rgb, depth, label)
         losses = dict()
         if label is not None:
-            losses["loss_decode"] = self.criterion(out, label.long())
+            # Cast to float32 for numerical stability under AMP autocast
+            losses["loss_decode"] = self.criterion(out.float(), label.long())
             if self.aux_head:
                 losses["loss_aux"] = self.train_cfg.aux_rate * self.criterion(
-                    aux_fm, label.long()
+                    aux_fm.float(), label.long()
                 )
             else:
                 losses["loss_aux"] = 0

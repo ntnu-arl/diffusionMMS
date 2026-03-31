@@ -55,8 +55,9 @@ class Trainer:
 
         self.model.to(self.device)
 
-        # AMP: automatic mixed precision
-        self.scaler = torch.amp.GradScaler("cuda")
+        # AMP: bfloat16 avoids float16 overflow in backward (especially
+        # with large backbones + gradient checkpointing).  No GradScaler needed.
+        self.amp_dtype = torch.bfloat16
 
         start_epoch = 1
         if train_cfg.resume is not None:
@@ -230,17 +231,16 @@ class Trainer:
             depth = samples["depth"].to(cfg.device, non_blocking=True) if "depth" in samples else None
             label = samples["label"].to(cfg.device, non_blocking=True)
 
-            # AMP forward pass
-            with torch.amp.autocast("cuda"):
+            # AMP forward pass (bfloat16: no overflow, no GradScaler needed)
+            with torch.amp.autocast("cuda", dtype=self.amp_dtype):
                 losses = self.model(rgb, depth, label)
 
             # Faster than zero_grad(): sets gradients to None instead of zero
             self.optimizer.zero_grad(set_to_none=True)
 
-            # AMP backward + step
-            self.scaler.scale(losses["total_loss"]).backward()
-            self.scaler.step(self.optimizer)
-            self.scaler.update()
+            losses["total_loss"].backward()
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+            self.optimizer.step()
 
             current_step = (self.epoch - 1) * num_iters + data_iter_step
             lr = self.scheduler.get_lr(current_step)

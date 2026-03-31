@@ -11,14 +11,16 @@ differ in sequence number.  A label list file (e.g. dev_phase.txt) is used
 to build a timestamp -> expected label filename lookup.
 
 Usage:
-    # Development phase (361 images)
+    # Basic inference (shorter_side=480, no TTA)
     python inference.py --config config/goose/goose_dat_s_epoch_100.yaml \
         --epoch 100 --output submission/ \
         --label_list data/goose_dataset/dev_phase/dev_phase.txt
 
-    # Full test phase (all 1815 images)
+    # Higher resolution + multi-scale TTA (recommended)
     python inference.py --config config/goose/goose_dat_s_epoch_100.yaml \
-        --epoch 100 --output submission/
+        --epoch 100 --output submission/ \
+        --label_list data/goose_dataset/dev_phase/dev_phase.txt \
+        --shorter_side 720 --tta
 
     # Then zip and upload:
     cd submission && zip -r ../submission.zip . && cd ..
@@ -31,6 +33,7 @@ import argparse
 import cv2
 import numpy as np
 import torch
+import torch.nn.functional as F
 from PIL import Image
 from omegaconf import OmegaConf
 from tqdm import tqdm
@@ -44,10 +47,6 @@ NORM_MEAN = np.array([0.485, 0.456, 0.406])
 NORM_STD = np.array([0.229, 0.224, 0.225])
 
 # Regex to extract timestamp from any GOOSE filename.
-# Works for both MuCAR-3 (double underscore) and GOOSE-Ex / Spot (single underscore):
-#   "2022-07-07_campus_no_ptp__0015_1657197601665184211_windshield_vis.png"
-#   "alice_scenario01_sequence14_0003_1691670612470132000_camera_left.png"
-# Captures: timestamp (long digit string before the suffix)
 _GOOSE_TIMESTAMP = re.compile(
     r"_(\d{10,})_(?:windshield_vis|windshield_nir|front|camera_left|realsense|labelids)\.png$"
 )
@@ -69,8 +68,16 @@ def parse_args():
              "match the list exactly. If omitted, all test images are processed.",
     )
     parser.add_argument(
-        "--shorter_side", type=int, default=480,
-        help="Resize shorter side to this before inference (default: 480)",
+        "--shorter_side", type=int, default=720,
+        help="Resize shorter side to this before inference (default: 720)",
+    )
+    parser.add_argument(
+        "--tta", action="store_true",
+        help="Enable multi-scale + flip test-time augmentation",
+    )
+    parser.add_argument(
+        "--tta_scales", type=float, nargs="+", default=[0.75, 1.0, 1.25],
+        help="Scales for TTA relative to shorter_side (default: 0.75 1.0 1.25)",
     )
     return parser.parse_args()
 
@@ -90,18 +97,12 @@ def build_label_lookup(label_list_path):
 
 
 def find_rgb_images(root, label_lookup=None):
-    """Walk root and return list of (label_filename, absolute_path) for RGB images.
-
-    If label_lookup is provided, only images whose timestamp exists in the
-    lookup are returned, and the label filename comes from the lookup
-    (so the sequence number matches what CodaBench expects).
-    """
+    """Walk root and return list of (label_filename, absolute_path) for RGB images."""
     pairs = []
     for dirpath, _, filenames in os.walk(root):
         for fn in sorted(filenames):
             if not fn.lower().endswith(".png"):
                 continue
-            # Skip NIR images
             if "_nir" in fn.lower():
                 continue
             m = _GOOSE_TIMESTAMP.search(fn)
@@ -115,7 +116,6 @@ def find_rgb_images(root, label_lookup=None):
                     continue
                 label_fn = label_lookup[timestamp]
             else:
-                # Derive label filename from image filename
                 label_fn = _GOOSE_TIMESTAMP.sub(
                     f"_{timestamp}_labelids.png", fn
                 )
@@ -137,6 +137,61 @@ def preprocess(img_pil):
     img = (img - NORM_MEAN) / NORM_STD
     img = img.transpose(2, 0, 1)  # HWC -> CHW
     return torch.from_numpy(img).unsqueeze(0).float()
+
+
+def run_single(model, rgb_tensor):
+    """Run model on a single (1, 3, H, W) tensor, return softmax logits."""
+    with torch.no_grad(), torch.amp.autocast("cuda"):
+        score = model.sampling(rgb_tensor, depth=None)
+    return score.softmax(dim=1)
+
+
+def predict_tta(model, img_pil, shorter_side, scales):
+    """Multi-scale + flip TTA. Returns averaged softmax tensor at img_pil's size."""
+    orig_w, orig_h = img_pil.size
+    accum = None
+    count = 0
+
+    for scale in scales:
+        scaled_side = int(shorter_side * scale)
+        img_scaled = resize_shorter_side(img_pil, scaled_side)
+        rgb = preprocess(img_scaled).cuda()
+
+        # Forward pass
+        prob = run_single(model, rgb)
+        # Resize to original resolution
+        prob = F.interpolate(prob, size=(orig_h, orig_w), mode="bilinear", align_corners=False)
+
+        if accum is None:
+            accum = prob
+        else:
+            accum += prob
+        count += 1
+
+        # Horizontal flip
+        rgb_flip = torch.flip(rgb, dims=[3])
+        prob_flip = run_single(model, rgb_flip)
+        prob_flip = torch.flip(prob_flip, dims=[3])
+        prob_flip = F.interpolate(prob_flip, size=(orig_h, orig_w), mode="bilinear", align_corners=False)
+        accum += prob_flip
+        count += 1
+
+    return (accum / count).squeeze(0)  # (C, H, W)
+
+
+def predict_simple(model, img_pil, shorter_side):
+    """Single-scale inference. Returns prediction array at original resolution."""
+    orig_w, orig_h = img_pil.size
+    img_resized = resize_shorter_side(img_pil, shorter_side)
+    rgb = preprocess(img_resized).cuda()
+
+    with torch.no_grad(), torch.amp.autocast("cuda"):
+        score = model.sampling(rgb, depth=None)
+
+    pred = score.argmax(1).squeeze(0).cpu().numpy().astype(np.uint8)
+    if pred.shape[0] != orig_h or pred.shape[1] != orig_w:
+        pred = cv2.resize(pred, (orig_w, orig_h), interpolation=cv2.INTER_NEAREST)
+    return pred
 
 
 def main():
@@ -175,27 +230,18 @@ def main():
 
     image_pairs = find_rgb_images(test_root, label_lookup)
     logger.info(f"Found {len(image_pairs)} images to process")
+    logger.info(f"shorter_side={args.shorter_side}, TTA={'ON scales=' + str(args.tta_scales) if args.tta else 'OFF'}")
 
     os.makedirs(args.output, exist_ok=True)
 
     for label_fn, abs_path in tqdm(image_pairs, desc="Inference"):
         img_pil = Image.open(abs_path).convert("RGB")
-        orig_w, orig_h = img_pil.size
 
-        # Resize for inference, then upscale prediction back to original
-        img_resized = resize_shorter_side(img_pil, args.shorter_side)
-        rgb = preprocess(img_resized).cuda()
-
-        with torch.no_grad(), torch.amp.autocast("cuda"):
-            score = model.sampling(rgb, depth=None)
-
-        pred = score.argmax(1).squeeze(0).cpu().numpy().astype(np.uint8)
-
-        # Upscale prediction to original resolution
-        if pred.shape[0] != orig_h or pred.shape[1] != orig_w:
-            pred = cv2.resize(
-                pred, (orig_w, orig_h), interpolation=cv2.INTER_NEAREST
-            )
+        if args.tta:
+            prob = predict_tta(model, img_pil, args.shorter_side, args.tta_scales)
+            pred = prob.argmax(0).cpu().numpy().astype(np.uint8)
+        else:
+            pred = predict_simple(model, img_pil, args.shorter_side)
 
         # Save as flat grayscale PNG
         out_path = os.path.join(args.output, label_fn)
@@ -208,3 +254,4 @@ def main():
 if __name__ == "__main__":
     torch.manual_seed(1234)
     main()
+
