@@ -324,8 +324,6 @@ class GooseDataset(Dataset):
         output["rgb"] = rgb
 
         label = cv2.imread(lbl_path, cv2.IMREAD_GRAYSCALE)
-        # Class 0 is "undefined" -> map to 255 (ignore_index)
-        label[label == 0] = 255
         output["label"] = label
 
         if self.common_transforms is not None:

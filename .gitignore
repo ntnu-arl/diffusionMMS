@@ -5,6 +5,9 @@ pretrained/
 **.png
 **.jpg
 submission/
+runs/
+**.pt
+**.pth
 log/
 data
 output_dir/

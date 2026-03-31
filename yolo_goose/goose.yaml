@@ -1,0 +1,77 @@
+# GOOSE dataset config for YOLO segmentation
+# Generated for the GOOSE 2D Fine-Grained Semantic Segmentation challenge (CodaBench)
+#
+# After running convert_dataset.py, update 'path' below to match the output directory.
+
+path: ../data/goose_yolo
+train: images/train
+val: images/val
+test: images/test
+
+# 64 GOOSE classes (class 0 = undefined / void, excluded from training annotations)
+nc: 64
+names:
+  0: undefined
+  1: traffic_cone
+  2: snow
+  3: cobble
+  4: obstacle
+  5: leaves
+  6: street_light
+  7: bikeway
+  8: ego_vehicle
+  9: pedestrian_crossing
+  10: road_block
+  11: road_marking
+  12: car
+  13: bicycle
+  14: person
+  15: bus
+  16: forest
+  17: bush
+  18: moss
+  19: traffic_light
+  20: motorcycle
+  21: sidewalk
+  22: curb
+  23: asphalt
+  24: gravel
+  25: boom_barrier
+  26: rail_track
+  27: tree_crown
+  28: tree_trunk
+  29: debris
+  30: crops
+  31: soil
+  32: rider
+  33: animal
+  34: truck
+  35: on_rails
+  36: caravan
+  37: trailer
+  38: building
+  39: wall
+  40: rock
+  41: fence
+  42: guard_rail
+  43: bridge
+  44: tunnel
+  45: pole
+  46: traffic_sign
+  47: misc_sign
+  48: barrier_tape
+  49: kick_scooter
+  50: low_grass
+  51: high_grass
+  52: scenery_vegetation
+  53: sky
+  54: water
+  55: wire
+  56: outlier
+  57: heavy_machinery
+  58: container
+  59: hedge
+  60: barrel
+  61: pipe
+  62: tree_root
+  63: military_vehicle
