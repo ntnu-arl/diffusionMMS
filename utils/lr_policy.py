@@ -50,6 +50,53 @@ class MultiStageLR(BaseLR):
                 return it_lr[1]
 
 
+class CosineWarmRestartsLR(BaseLR):
+    """Cosine annealing with warm restarts (SGDR, Loshchilov & Hutter 2017).
+
+    Args:
+        start_lr: Peak learning rate at each restart.
+        min_lr: Minimum learning rate at the end of each cosine cycle.
+        total_iters: Total number of training iterations.
+        cycle_iters: Iterations per cosine cycle (T_0).
+        cycle_mult: Multiplier for cycle length after each restart (T_mult).
+            1 = fixed-length cycles, 2 = doubling cycles, etc.
+        warmup_steps: Linear warmup iterations at the very start of training.
+    """
+
+    def __init__(self, start_lr, min_lr, total_iters, cycle_iters,
+                 cycle_mult=1, warmup_steps=0):
+        import math
+        self.start_lr = start_lr
+        self.min_lr = min_lr
+        self.total_iters = total_iters
+        self.cycle_iters = cycle_iters
+        self.cycle_mult = cycle_mult
+        self.warmup_steps = warmup_steps
+        self._math = math
+
+    def get_lr(self, cur_iter):
+        if cur_iter < self.warmup_steps:
+            return self.start_lr * (cur_iter / self.warmup_steps)
+
+        t = cur_iter - self.warmup_steps
+        if self.cycle_mult == 1:
+            cycle_pos = t % self.cycle_iters
+            cycle_len = self.cycle_iters
+        else:
+            # Geometric series: find which cycle we're in
+            cycle = 0
+            consumed = 0
+            cycle_len = self.cycle_iters
+            while consumed + cycle_len <= t:
+                consumed += cycle_len
+                cycle += 1
+                cycle_len = int(self.cycle_iters * (self.cycle_mult ** cycle))
+            cycle_pos = t - consumed
+
+        cos_val = self._math.cos(self._math.pi * cycle_pos / cycle_len)
+        return self.min_lr + 0.5 * (self.start_lr - self.min_lr) * (1 + cos_val)
+
+
 class LinearIncreaseLR(BaseLR):
     def __init__(self, start_lr, end_lr, warm_iters):
         self._start_lr = start_lr

@@ -5,6 +5,7 @@ import torch.distributed as dist
 from omegaconf import OmegaConf
 from utils.logger import get_root_logger
 from utils import misc, lr_policy
+from utils.ema import ModelEMA
 import time
 import datetime
 from utils.helper import Timer
@@ -29,17 +30,42 @@ class Trainer:
         self.world_size = world_size
         self.distributed = world_size > 1
 
-        niters_per_epoch = len(self.train_loader)
-        total_iteration = self.train_cfg.num_epochs * niters_per_epoch
-        self.scheduler = lr_policy.WarmUpPolyLR(
-            self.train_cfg.lr,
-            self.train_cfg.lr_power,
-            total_iteration,
-            self.train_cfg.warmup_iter,
-        )
+        self.niters_per_epoch = len(self.train_loader)
+        self.scheduler_name = getattr(self.train_cfg, "lr_scheduler", "warmup_poly")
+        # iter_offset is set after resume to make cosine restarts start fresh
+        self.iter_offset = 0
 
         # Log frequency: every N iterations instead of every iteration
         self.log_interval = getattr(self.train_cfg, "log_interval", 50)
+
+    def _build_scheduler(self, start_epoch=1):
+        """Build LR scheduler. For cosine warm restarts, cycles start fresh
+        from start_epoch so that resuming doesn't land mid-cycle."""
+        total_iteration = self.train_cfg.num_epochs * self.niters_per_epoch
+
+        if self.scheduler_name == "cosine_warm_restarts":
+            # Offset so cur_iter passed to scheduler is 0 at resume point
+            self.iter_offset = (start_epoch - 1) * self.niters_per_epoch
+            remaining_iters = total_iteration - self.iter_offset
+            cycle_epochs = getattr(self.train_cfg, "cycle_epochs", 20)
+            cycle_mult = getattr(self.train_cfg, "cycle_mult", 1)
+            min_lr = getattr(self.train_cfg, "min_lr", 1e-6)
+            warmup_iter = getattr(self.train_cfg, "warmup_iter", 0)
+            self.scheduler = lr_policy.CosineWarmRestartsLR(
+                self.train_cfg.lr,
+                min_lr,
+                remaining_iters,
+                cycle_iters=cycle_epochs * self.niters_per_epoch,
+                cycle_mult=cycle_mult,
+                warmup_steps=warmup_iter,
+            )
+        else:
+            self.scheduler = lr_policy.WarmUpPolyLR(
+                self.train_cfg.lr,
+                self.train_cfg.lr_power,
+                total_iteration,
+                self.train_cfg.warmup_iter,
+            )
 
     @property
     def is_main(self):
@@ -81,6 +107,22 @@ class Trainer:
             start_epoch = misc.load_model_to_resume(
                 train_cfg, self._unwrap_model(), optimizer=self.optimizer
             )
+        self._build_scheduler(start_epoch)
+
+        # EMA (optional)
+        self.use_ema = getattr(train_cfg, "use_ema", False)
+        self.ema = None
+        if self.use_ema and self.is_main:
+            ema_decay = getattr(train_cfg, "ema_decay", 0.9999)
+            self.ema = ModelEMA(self._unwrap_model(), decay=ema_decay)
+            # Load EMA state from checkpoint if resuming
+            if train_cfg.resume is not None:
+                ckpt = torch.load(train_cfg.resume, map_location="cpu", weights_only=False)
+                if "ema" in ckpt:
+                    self.ema.load_state_dict(ckpt["ema"])
+                    logger.info("Loaded EMA state from checkpoint")
+            logger.info(f"EMA enabled with decay={ema_decay}")
+
         self.model.train()
         start_time = time.time()
         output_dir = os.path.join(
@@ -119,11 +161,23 @@ class Trainer:
                     model=self._unwrap_model(),
                     optimizer=self.optimizer,
                     epoch=epoch,
+                    ema=self.ema,
                 )
 
-            # Evaluate during last N epochs (rank 0 only)
-            if self.is_main and self.evaluator is not None and epoch >= eval_start_epoch:
-                self._unwrap_model().eval()
+            # Evaluate during last N epochs, every eval_interval epochs (rank 0 only)
+            eval_interval = getattr(train_cfg, "eval_interval", 1)
+            should_eval = (
+                self.is_main
+                and self.evaluator is not None
+                and epoch >= eval_start_epoch
+                and (epoch % eval_interval == 0 or epoch == train_cfg.num_epochs)
+            )
+            if should_eval:
+                raw_model = self._unwrap_model()
+                # Swap in EMA weights for evaluation
+                if self.ema is not None:
+                    self.ema.apply(raw_model)
+                raw_model.eval()
                 result_line, mIoU = self.evaluator.run_inline(epoch)
                 self.log_writer.add_scalar("val_mIoU", mIoU, epoch)
 
@@ -136,6 +190,9 @@ class Trainer:
                     best_iou = mIoU
                     best_epoch = epoch
 
+                # Restore training weights
+                if self.ema is not None:
+                    self.ema.restore(raw_model)
                 self.model.train()
 
             # Sync all ranks before next epoch so rank 0 eval doesn't block
@@ -269,7 +326,10 @@ class Trainer:
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
             self.optimizer.step()
 
-            current_step = (self.epoch - 1) * num_iters + data_iter_step
+            if self.ema is not None:
+                self.ema.update(self._unwrap_model())
+
+            current_step = (self.epoch - 1) * num_iters + data_iter_step - self.iter_offset
             lr = self.scheduler.get_lr(current_step)
 
             for param_group in self.optimizer.param_groups:

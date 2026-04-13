@@ -58,6 +58,7 @@ def main(config):
 
     model = get_model(model_name=config.model.name, **config.model.params)
     model = model.cuda(local_rank)
+    model = torch.compile(model)
 
     if distributed:
         model = DDP(model, device_ids=[local_rank])

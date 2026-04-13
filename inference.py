@@ -207,9 +207,14 @@ def main():
         f"checkpoint-{args.epoch}.pth",
     )
     logger.info(f"Loading checkpoint: {checkpoint_path}")
-    model.load_state_dict(
-        torch.load(checkpoint_path, weights_only=False)["model"]
-    )
+    checkpoint = torch.load(checkpoint_path, weights_only=False)
+    state_dict = checkpoint["model"]
+    # Strip 'module.' (DDP) and '_orig_mod.' (torch.compile) prefixes
+    state_dict = {
+        k.removeprefix("module.").removeprefix("_orig_mod."): v
+        for k, v in state_dict.items()
+    }
+    model.load_state_dict(state_dict)
     model.cuda()
     model.eval()
 

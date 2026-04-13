@@ -3,12 +3,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.special import expm1
 import math
-from models import get_backbone, get_decoder, get_neck
+from models import get_backbone, get_decoder, get_neck, RGB_ONLY_BACKBONES
 from einops import rearrange, repeat
 from utils.logger import get_root_logger
 from models.common_layers import ConvModule
 from models.decoder.neck import MultiStageMerging
-from models.backbone.single_dat import Single_DAT
 
 logger = get_root_logger()
 
@@ -150,7 +149,7 @@ class DiffusionMMS(nn.Module):
             nn.Linear(time_dim, time_dim),  # [2, 1024]
         )
 
-        self.rgb_only = isinstance(self.backbone, Single_DAT)
+        self.rgb_only = backbone.name in RGB_ONLY_BACKBONES
 
         if not eval:
             self.init_weights(pretrained=pretrained)

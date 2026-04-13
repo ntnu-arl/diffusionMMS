@@ -248,6 +248,22 @@ class Evaluator:
         logger.info(f"Epoch {epoch} mIoU: {metric:.4f}")
         return result_line, metric
 
+    def eval_with_loss(self, data):
+        """Run inference and compute validation loss. Returns (pred, loss_scalar)."""
+        for key, value in data.items():
+            if isinstance(value, torch.Tensor):
+                data[key] = value.cuda(non_blocking=True)
+        with torch.no_grad(), torch.amp.autocast("cuda"):
+            depth = data.get("depth", None)
+            label = data["label"].squeeze(1)
+            # Compute loss via the training forward pass
+            losses = self.model(data["rgb"], depth, label)
+            loss_val = losses["total_loss"].item()
+            # Get predictions via sampling (diffusion inference)
+            score = self.model.sampling(data["rgb"], depth)
+        pred = score.argmax(1)
+        return pred, loss_val
+
     def eval(self, data):
         # model.eval() and .cuda() are assumed to be set by the caller
         for key, value in data.items():

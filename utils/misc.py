@@ -61,7 +61,7 @@ def load_model_to_resume(args, model, optimizer):
             return epoch
 
 
-def save_model(args, output_dir, epoch, model, optimizer):
+def save_model(args, output_dir, epoch, model, optimizer, ema=None):
     output_dir = Path(output_dir)
     epoch_name = str(epoch)
     checkpoint_paths = [output_dir / ("checkpoint-%s.pth" % epoch_name)]
@@ -72,6 +72,8 @@ def save_model(args, output_dir, epoch, model, optimizer):
             "epoch": epoch,
             "args": args,
         }
+        if ema is not None:
+            to_save["ema"] = ema.state_dict()
         torch.save(to_save, checkpoint_path)
 
     return checkpoint_paths

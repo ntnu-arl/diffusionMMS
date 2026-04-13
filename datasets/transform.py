@@ -99,6 +99,83 @@ class SemSegTransform(object):
         return res
 
 
+class PhotoMetricTransform(object):
+    """Photometric augmentations applied only to RGB (numpy uint8 HWC).
+
+    Leaves 'label' (and 'depth') untouched. Should be placed after
+    SemSegTransform in common_transforms.
+
+    Args:
+        brightness: max absolute delta for brightness (0–255 scale).
+        contrast: range [1-contrast, 1+contrast] for contrast factor.
+        saturation: range [1-saturation, 1+saturation] for saturation factor.
+        hue: max absolute delta for hue shift in degrees (0–180).
+        blur_prob: probability of applying Gaussian blur.
+        blur_kernel: kernel size for Gaussian blur (must be odd).
+        grayscale_prob: probability of converting to grayscale.
+    """
+
+    def __init__(
+        self,
+        brightness=32,
+        contrast=0.5,
+        saturation=0.5,
+        hue=18,
+        blur_prob=0.3,
+        blur_kernel=5,
+        grayscale_prob=0.1,
+    ):
+        self.brightness = brightness
+        self.contrast = contrast
+        self.saturation = saturation
+        self.hue = hue
+        self.blur_prob = blur_prob
+        self.blur_kernel = blur_kernel
+        self.grayscale_prob = grayscale_prob
+
+    def __call__(self, **kwargs):
+        rgb = np.array(kwargs["rgb"], dtype=np.float32)
+
+        # Brightness
+        if random.random() < 0.5:
+            delta = random.uniform(-self.brightness, self.brightness)
+            rgb = np.clip(rgb + delta, 0, 255)
+
+        # Contrast
+        if random.random() < 0.5:
+            factor = random.uniform(1 - self.contrast, 1 + self.contrast)
+            mean = rgb.mean()
+            rgb = np.clip((rgb - mean) * factor + mean, 0, 255)
+
+        # Saturation (convert to HSV, scale S channel)
+        if random.random() < 0.5:
+            hsv = cv2.cvtColor(rgb.astype(np.uint8), cv2.COLOR_RGB2HSV).astype(np.float32)
+            factor = random.uniform(1 - self.saturation, 1 + self.saturation)
+            hsv[:, :, 1] = np.clip(hsv[:, :, 1] * factor, 0, 255)
+            rgb = cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2RGB).astype(np.float32)
+
+        # Hue
+        if random.random() < 0.5:
+            hsv = cv2.cvtColor(rgb.astype(np.uint8), cv2.COLOR_RGB2HSV).astype(np.float32)
+            delta = random.uniform(-self.hue, self.hue)
+            hsv[:, :, 0] = (hsv[:, :, 0] + delta) % 180
+            rgb = cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2RGB).astype(np.float32)
+
+        # Gaussian blur
+        if random.random() < self.blur_prob:
+            rgb = cv2.GaussianBlur(
+                rgb.astype(np.uint8), (self.blur_kernel, self.blur_kernel), 0
+            ).astype(np.float32)
+
+        # Random grayscale
+        if random.random() < self.grayscale_prob:
+            gray = cv2.cvtColor(rgb.astype(np.uint8), cv2.COLOR_RGB2GRAY)
+            rgb = cv2.cvtColor(gray, cv2.COLOR_GRAY2RGB).astype(np.float32)
+
+        kwargs["rgb"] = rgb.astype(np.uint8)
+        return kwargs
+
+
 class ResizeTransform(object):
     def __init__(self, shorter_side):
         self.shorter_side = shorter_side
